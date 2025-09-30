@@ -2195,13 +2195,18 @@ class _VendorsTabState extends State<VendorsTab> {
     for (int i = 1; i <= 100; i++) {
       String scannerId = 'EvsuPay$i';
       // Check if this scanner is already assigned
-      bool isAssigned = _services.any(
+      bool isAssignedToService = _services.any(
         (service) => service['scanner_id'] == scannerId,
       );
+      bool isAssignedToAdmin = _adminAccounts.any(
+        (admin) => admin['scanner_id'] == scannerId,
+      );
+      bool isAssigned = isAssignedToService || isAssignedToAdmin;
 
       items.add(
         DropdownMenuItem<String>(
           value: scannerId,
+          enabled: !isAssigned,
           child: Row(
             children: [
               Icon(
@@ -2219,9 +2224,9 @@ class _VendorsTabState extends State<VendorsTab> {
                 ),
               ),
               if (isAssigned)
-                const Text(
-                  '(Assigned)',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                Text(
+                  isAssignedToAdmin ? '(Assigned to Admin)' : '(Assigned)',
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
                 ),
             ],
           ),
@@ -2245,6 +2250,15 @@ class _VendorsTabState extends State<VendorsTab> {
         setState(() {
           _services = List<Map<String, dynamic>>.from(servicesResult['data']);
         });
+      }
+
+      // Also load admin accounts to cross-check assigned scanners for dropdown disabling
+      if (_adminAccounts.isEmpty) {
+        try {
+          await _loadAdminAccountsFallback();
+        } catch (_) {
+          // ignore: just for dropdown disabling; UI already handles admin loading elsewhere
+        }
       }
 
       // Load scanners from database
@@ -2279,12 +2293,17 @@ class _VendorsTabState extends State<VendorsTab> {
     }
 
     // Check if scanner is already assigned
-    bool isAlreadyAssigned = _services.any(
+    bool isAlreadyAssignedToService = _services.any(
       (service) => service['scanner_id'] == _selectedScannerId,
     );
+    bool isAlreadyAssignedToAdmin = _adminAccounts.any(
+      (admin) => admin['scanner_id'] == _selectedScannerId,
+    );
+    bool isAlreadyAssigned =
+        isAlreadyAssignedToService || isAlreadyAssignedToAdmin;
 
     if (isAlreadyAssigned) {
-      _showErrorDialog('This scanner is already assigned to another service');
+      _showErrorDialog('This scanner is already assigned to another account');
       return;
     }
 

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'dart:math' as math;
+import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'forgot_password_page.dart';
 import 'user/user_dashboard.dart';
@@ -26,12 +26,14 @@ class _LoginPageState extends State<LoginPage> {
   IconData _floatingErrorIcon = Icons.error;
   String _floatingErrorTitle = '';
   Color _floatingErrorColor = Colors.red;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
   @override
   void initState() {
     super.initState();
     _checkExistingSession();
     _checkInitialConnectivity();
+    _subscribeToConnectivityChanges();
   }
 
   /// Check initial connectivity status
@@ -57,6 +59,7 @@ class _LoginPageState extends State<LoginPage> {
   void dispose() {
     studentIdController.dispose();
     passwordController.dispose();
+    _connectivitySubscription?.cancel();
     super.dispose();
   }
 
@@ -78,6 +81,38 @@ class _LoginPageState extends State<LoginPage> {
     //     await SessionService.clearSession();
     //   }
     // }
+  }
+
+  void _subscribeToConnectivityChanges() {
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+      List<ConnectivityResult> results,
+    ) async {
+      final ConnectivityResult latest =
+          results.isNotEmpty ? results.last : ConnectivityResult.none;
+      bool isOnline = latest != ConnectivityResult.none;
+      if (isOnline) {
+        // Double-check actual reachability
+        final reachable = await _checkInternetConnection();
+        if (!mounted) return;
+        setState(() {
+          hasInternetConnection = reachable;
+          if (reachable) {
+            _showFloatingError = false;
+          }
+        });
+      } else {
+        if (!mounted) return;
+        setState(() {
+          hasInternetConnection = false;
+        });
+        _showFloatingErrorModal(
+          Icons.wifi_off,
+          'No Internet Connection',
+          'Please check your network connection and try again.',
+          Colors.orange,
+        );
+      }
+    });
   }
 
   /// Check internet connectivity with actual server test
@@ -370,21 +405,13 @@ class _LoginPageState extends State<LoginPage> {
     final screenSize = MediaQuery.of(context).size;
     final screenWidth = screenSize.width;
     final screenHeight = screenSize.height;
-    final safePadding = MediaQuery.of(context).padding;
 
     // Responsive calculations
     final isSmallScreen = screenWidth < 400;
     final isVerySmallScreen = screenWidth < 350;
 
     // Dynamic sizing
-    final double modalMaxWidth = 520.0;
-    final double availableWidth = screenWidth - 24.0; // keep 12px margins
-    final double modalWidth = math
-        .min(
-          availableWidth,
-          isSmallScreen ? screenWidth * 0.9 : screenWidth * 0.8,
-        )
-        .clamp(240.0, modalMaxWidth);
+    final modalWidth = isSmallScreen ? screenWidth * 0.9 : screenWidth * 0.8;
     final iconSize =
         isVerySmallScreen
             ? 16.0
@@ -405,26 +432,14 @@ class _LoginPageState extends State<LoginPage> {
             : 13.0;
     final buttonFontSize = isVerySmallScreen ? 12.0 : 14.0;
 
-    final double desiredTop = screenHeight * 0.35; // position over inputs
-    final double top = desiredTop.clamp(
-      safePadding.top + 12.0,
-      screenHeight - 200.0,
-    );
-    final double left = (screenWidth - modalWidth) / 2;
-
     return Positioned(
-      top: top,
-      left: left,
+      top: screenHeight * 0.35,
+      left: (screenWidth - modalWidth) / 2,
       child: Material(
         elevation: 8,
         borderRadius: BorderRadius.circular(12),
         child: Container(
           width: modalWidth,
-          constraints: BoxConstraints(
-            // Cap height so it doesn't overflow on small screens
-            maxHeight: screenHeight * 0.55,
-            minWidth: 240,
-          ),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
@@ -440,7 +455,7 @@ class _LoginPageState extends State<LoginPage> {
               ),
             ],
           ),
-          child: SingleChildScrollView(
+          child: Padding(
             padding: EdgeInsets.all(isSmallScreen ? 16 : 20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -470,9 +485,8 @@ class _LoginPageState extends State<LoginPage> {
                           fontWeight: FontWeight.w600,
                           color: Colors.black87,
                         ),
-                        maxLines: 2,
-                        softWrap: true,
-                        overflow: TextOverflow.fade,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     GestureDetector(
@@ -500,7 +514,8 @@ class _LoginPageState extends State<LoginPage> {
                     height: 1.3,
                   ),
                   textAlign: TextAlign.center,
-                  softWrap: true,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
                 ),
 
                 SizedBox(height: isSmallScreen ? 16 : 20),
@@ -577,6 +592,211 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  Widget _buildFloatingOfflineBanner() {
+    final size = MediaQuery.of(context).size;
+    final screenWidth = size.width;
+    final isWideScreen = screenWidth > 400;
+    final isVerySmallScreen = screenWidth < 320;
+    final double maxCardWidth = screenWidth >= 600 ? 520 : screenWidth - 32;
+
+    return Positioned.fill(
+      child: Align(
+        alignment: Alignment.center,
+        child: Material(
+          color: Colors.transparent,
+          elevation: 6,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            width: maxCardWidth,
+            decoration: BoxDecoration(
+              color: Colors.orange[50],
+              border: Border.all(color: Colors.orange[300]!),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child:
+                isWideScreen
+                    ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.wifi_off,
+                          color: Colors.orange[700],
+                          size: (screenWidth * 0.055).clamp(20.0, 28.0),
+                        ),
+                        SizedBox(width: (screenWidth * 0.03).clamp(8.0, 16.0)),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'No Internet Connection',
+                                style: TextStyle(
+                                  color: Colors.orange[700],
+                                  fontSize: (screenWidth * 0.035).clamp(
+                                    14.0,
+                                    18.0,
+                                  ),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                softWrap: true,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Please check your network settings.',
+                                style: TextStyle(
+                                  color: Colors.orange[600],
+                                  fontSize: (screenWidth * 0.03).clamp(
+                                    12.0,
+                                    16.0,
+                                  ),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                softWrap: true,
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(width: (screenWidth * 0.03).clamp(8.0, 16.0)),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(minWidth: 100),
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              setState(() {
+                                hasInternetConnection = false;
+                              });
+                              final hasInternet =
+                                  await _checkInternetConnection();
+                              if (!mounted) return;
+                              setState(() {
+                                hasInternetConnection = hasInternet;
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange[700],
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 10,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            child: Text(
+                              'Retry',
+                              style: TextStyle(
+                                fontSize: (screenWidth * 0.03).clamp(
+                                  12.0,
+                                  16.0,
+                                ),
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.fade,
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                    : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.wifi_off,
+                              color: Colors.orange[700],
+                              size: (screenWidth * 0.06).clamp(18.0, 24.0),
+                            ),
+                            SizedBox(width: screenWidth * 0.025),
+                            Expanded(
+                              child: Text(
+                                'No Internet Connection',
+                                style: TextStyle(
+                                  color: Colors.orange[700],
+                                  fontSize: (isVerySmallScreen
+                                          ? screenWidth * 0.035
+                                          : screenWidth * 0.032)
+                                      .clamp(13.0, 16.0),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                softWrap: true,
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: screenWidth * 0.025),
+                        Text(
+                          'Please check your network settings.',
+                          style: TextStyle(
+                            color: Colors.orange[600],
+                            fontSize: (isVerySmallScreen
+                                    ? screenWidth * 0.03
+                                    : screenWidth * 0.028)
+                                .clamp(11.0, 14.0),
+                            fontWeight: FontWeight.w500,
+                          ),
+                          softWrap: true,
+                          maxLines: 3,
+                        ),
+                        SizedBox(height: screenWidth * 0.03),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              setState(() {
+                                hasInternetConnection = false;
+                              });
+                              final hasInternet =
+                                  await _checkInternetConnection();
+                              if (!mounted) return;
+                              setState(() {
+                                hasInternetConnection = hasInternet;
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange[700],
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.symmetric(
+                                vertical: (screenWidth * 0.025).clamp(
+                                  8.0,
+                                  14.0,
+                                ),
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            child: Text(
+                              'Retry Connection',
+                              style: TextStyle(
+                                fontSize: (isVerySmallScreen
+                                        ? screenWidth * 0.03
+                                        : screenWidth * 0.028)
+                                    .clamp(12.0, 14.0),
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.fade,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     const Color evsuRed = Color(0xFFB01212); // deep red to match EVSU look
@@ -625,211 +845,7 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 45),
 
-                    // Internet Connection Status
-                    if (!hasInternetConnection)
-                      Container(
-                        width: double.infinity,
-                        constraints: BoxConstraints(
-                          minHeight: MediaQuery.of(context).size.height * 0.08,
-                          maxHeight: MediaQuery.of(context).size.height * 0.2,
-                        ),
-                        padding: EdgeInsets.symmetric(
-                          horizontal: MediaQuery.of(context).size.width * 0.04,
-                          vertical: MediaQuery.of(context).size.height * 0.015,
-                        ),
-                        margin: const EdgeInsets.only(bottom: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.orange[50],
-                          border: Border.all(color: Colors.orange[300]!),
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.orange.withOpacity(0.1),
-                              blurRadius: 4,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final screenWidth =
-                                MediaQuery.of(context).size.width;
-                            final isWideScreen = screenWidth > 400;
-                            final isVerySmallScreen = screenWidth < 320;
-
-                            if (isWideScreen) {
-                              // Horizontal layout for wider screens
-                              return Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.wifi_off,
-                                    color: Colors.orange[700],
-                                    size: screenWidth * 0.055,
-                                  ),
-                                  SizedBox(width: screenWidth * 0.03),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          'No Internet Connection',
-                                          style: TextStyle(
-                                            color: Colors.orange[700],
-                                            fontSize: screenWidth * 0.035,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        SizedBox(height: screenWidth * 0.005),
-                                        Text(
-                                          'Please check your network settings.',
-                                          style: TextStyle(
-                                            color: Colors.orange[600],
-                                            fontSize: screenWidth * 0.03,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  SizedBox(width: screenWidth * 0.03),
-                                  Flexible(
-                                    child: ElevatedButton(
-                                      onPressed: () async {
-                                        // Show loading state during retry
-                                        setState(() {
-                                          hasInternetConnection = false;
-                                        });
-
-                                        final hasInternet =
-                                            await _checkInternetConnection();
-                                        setState(() {
-                                          hasInternetConnection = hasInternet;
-                                        });
-                                      },
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.orange[700],
-                                        foregroundColor: Colors.white,
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: screenWidth * 0.04,
-                                          vertical: screenWidth * 0.02,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                        minimumSize: Size(
-                                          screenWidth * 0.15,
-                                          0,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        'Retry',
-                                        style: TextStyle(
-                                          fontSize: screenWidth * 0.03,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            } else {
-                              // Vertical layout for narrower screens
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        Icons.wifi_off,
-                                        color: Colors.orange[700],
-                                        size: screenWidth * 0.06,
-                                      ),
-                                      SizedBox(width: screenWidth * 0.025),
-                                      Expanded(
-                                        child: Text(
-                                          'No Internet Connection',
-                                          style: TextStyle(
-                                            color: Colors.orange[700],
-                                            fontSize:
-                                                isVerySmallScreen
-                                                    ? screenWidth * 0.035
-                                                    : screenWidth * 0.032,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  SizedBox(height: screenWidth * 0.025),
-                                  Text(
-                                    'Please check your network settings.',
-                                    style: TextStyle(
-                                      color: Colors.orange[600],
-                                      fontSize:
-                                          isVerySmallScreen
-                                              ? screenWidth * 0.03
-                                              : screenWidth * 0.028,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  SizedBox(height: screenWidth * 0.03),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: ElevatedButton(
-                                      onPressed: () async {
-                                        // Show loading state during retry
-                                        setState(() {
-                                          hasInternetConnection = false;
-                                        });
-
-                                        final hasInternet =
-                                            await _checkInternetConnection();
-                                        setState(() {
-                                          hasInternetConnection = hasInternet;
-                                        });
-                                      },
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.orange[700],
-                                        foregroundColor: Colors.white,
-                                        padding: EdgeInsets.symmetric(
-                                          vertical: screenWidth * 0.025,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                      ),
-                                      child: Text(
-                                        'Retry Connection',
-                                        style: TextStyle(
-                                          fontSize:
-                                              isVerySmallScreen
-                                                  ? screenWidth * 0.03
-                                                  : screenWidth * 0.028,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            }
-                          },
-                        ),
-                      ),
+                    // (Removed in-flow banner; now rendered as floating overlay)
 
                     // Username
                     Align(
@@ -928,12 +944,30 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           );
                         },
-                        child: const Text(
-                          'Forgot password?',
-                          style: TextStyle(
-                            color: evsuRed,
-                            fontWeight: FontWeight.w600,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
                           ),
+                          minimumSize: const Size(0, 0),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final double screenWidth =
+                                MediaQuery.of(context).size.width;
+                            final bool isVerySmall = screenWidth < 320;
+                            return Text(
+                              'Forgot password?',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: evsuRed,
+                                fontWeight: FontWeight.w600,
+                                fontSize: isVerySmall ? 12 : 14,
+                              ),
+                            );
+                          },
                         ),
                       ),
                     ),
@@ -1010,8 +1044,14 @@ class _LoginPageState extends State<LoginPage> {
               ),
             ),
           ),
-          // Floating Error Modal
-          if (_showFloatingError) _buildFloatingErrorModal(),
+          // Floating offline banner that overlaps content without shifting layout
+          if (!hasInternetConnection) _buildFloatingOfflineBanner(),
+          // Modal barrier + Floating Error Modal on top of everything
+          if (_showFloatingError) ...[
+            // Blocks interaction behind and dims background
+            ModalBarrier(dismissible: false, color: Colors.black54),
+            _buildFloatingErrorModal(),
+          ],
         ],
       ),
     );
