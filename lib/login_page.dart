@@ -1,0 +1,1049 @@
+import 'package:flutter/material.dart';
+import 'dart:math' as math;
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'forgot_password_page.dart';
+import 'user/user_dashboard.dart';
+import 'admin/admin_dashboard.dart';
+import 'services_school/service_dashboard.dart';
+import 'services/session_service.dart';
+import 'services/supabase_service.dart';
+
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final TextEditingController studentIdController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+  bool isPasswordVisible = false;
+  bool isLoading = false;
+  bool hasInternetConnection = true;
+  bool _showFloatingError = false;
+  String _floatingErrorMessage = '';
+  IconData _floatingErrorIcon = Icons.error;
+  String _floatingErrorTitle = '';
+  Color _floatingErrorColor = Colors.red;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkExistingSession();
+    _checkInitialConnectivity();
+  }
+
+  /// Check initial connectivity status
+  Future<void> _checkInitialConnectivity() async {
+    try {
+      final hasInternet = await _checkInternetConnection();
+      if (mounted) {
+        setState(() {
+          hasInternetConnection = hasInternet;
+        });
+      }
+    } catch (e) {
+      print('DEBUG: Initial connectivity check failed: $e');
+      if (mounted) {
+        setState(() {
+          hasInternetConnection = false;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    studentIdController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  /// Check if user is already logged in
+  Future<void> _checkExistingSession() async {
+    await SessionService.initialize();
+
+    // Force clear any existing session to ensure fresh login
+    await SessionService.forceClearSession();
+
+    // Disable auto-login for now to ensure login page is always shown
+    // if (SessionService.isLoggedIn) {
+    //   // Verify the session is still valid by checking if user data exists
+    //   if (SessionService.currentUserData != null &&
+    //       SessionService.currentUserData!.isNotEmpty) {
+    //     _navigateToDashboard();
+    //   } else {
+    //     // Clear invalid session
+    //     await SessionService.clearSession();
+    //   }
+    // }
+  }
+
+  /// Check internet connectivity with actual server test
+  Future<bool> _checkInternetConnection() async {
+    try {
+      final connectivityResult = await Connectivity().checkConnectivity();
+
+      if (connectivityResult == ConnectivityResult.none) {
+        return false;
+      }
+
+      // Additional check to ensure we can actually reach the Supabase server
+      // by trying to make a simple request to test connectivity
+      try {
+        await SupabaseService.initialize();
+        // Try a simple query that should work if server is reachable
+        await SupabaseService.client
+            .from('auth_students')
+            .select('student_id')
+            .limit(1);
+        return true;
+      } catch (e) {
+        print('DEBUG: Server connectivity test failed: $e');
+        return false;
+      }
+    } catch (e) {
+      print('DEBUG: Connectivity check failed: $e');
+      return false;
+    }
+  }
+
+  Future<void> _login() async {
+    if (isLoading) return;
+
+    String studentId = studentIdController.text.trim();
+    String password = passwordController.text.trim();
+
+    if (studentId.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter both Username and Password'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      // Check internet connectivity first
+      print('DEBUG: Checking internet connectivity before login...');
+      final hasInternet = await _checkInternetConnection();
+      print('DEBUG: Internet connectivity result: $hasInternet');
+
+      if (!hasInternet) {
+        print('DEBUG: No internet connection, showing error dialog');
+        _showErrorDialog(
+          'No internet connection detected. Please check your network connection and try again.',
+        );
+        return;
+      }
+
+      print('DEBUG: Internet connection OK, proceeding with authentication...');
+      // Check system update settings to possibly block logins (admins exempt)
+      final sysResp = await SupabaseService.getSystemUpdateSettings();
+      final sys = (sysResp['data'] ?? {}) as Map;
+
+      final bool maintenance = sys['maintenance_mode'] == true;
+      final bool forceUpdate = sys['force_update_mode'] == true;
+      final bool disableAll = sys['disable_all_logins'] == true;
+
+      if (disableAll || maintenance || forceUpdate) {
+        // Allow admins to proceed; block others here before hitting auth
+        final adminProbe = await SupabaseService.authenticateAdmin(
+          username: studentId,
+          password: password,
+        );
+        if (!(adminProbe['success'] == true)) {
+          String reason =
+              disableAll
+                  ? 'The system is temporarily locked down.'
+                  : maintenance
+                  ? 'The system is under maintenance.'
+                  : 'A new version is required before login.';
+          _showErrorDialog('$reason Please try again later.');
+          return;
+        }
+      }
+
+      // First, try to authenticate as student
+      final studentResult = await SessionService.loginWithStudentId(
+        studentId: studentId,
+        password: password,
+      );
+
+      if (studentResult['success']) {
+        _navigateToDashboard();
+        return;
+      }
+
+      // If student authentication fails, try admin authentication (preserve case)
+      final adminResult = await SupabaseService.authenticateAdmin(
+        username: studentId,
+        password: password,
+      );
+
+      if (adminResult['success']) {
+        await _handleAdminLogin(adminResult['data']);
+        return;
+      }
+
+      // Next, try service account authentication (case-insensitive)
+      final serviceResult = await SupabaseService.authenticateServiceAccount(
+        username: studentId.toLowerCase(),
+        password: password,
+      );
+
+      if (serviceResult['success']) {
+        await _handleServiceLogin(serviceResult['data']);
+        return;
+      }
+
+      // If all authentication methods fail, check if it's a network issue first
+      // Re-check connectivity in case it changed during login attempt
+      final stillHasInternet = await _checkInternetConnection();
+      if (!stillHasInternet) {
+        _showErrorDialog(
+          'No internet connection detected. Please check your network connection and try again.',
+        );
+      } else {
+        _showErrorDialog(
+          'Invalid username or password. Please check your credentials.',
+        );
+      }
+    } catch (e) {
+      // Handle different types of errors
+      String errorMessage;
+      String errorString = e.toString().toLowerCase();
+
+      if (errorString.contains('network') ||
+          errorString.contains('connection') ||
+          errorString.contains('timeout') ||
+          errorString.contains('unreachable') ||
+          errorString.contains('no internet') ||
+          errorString.contains('socket') ||
+          errorString.contains('failed host lookup') ||
+          errorString.contains('connection refused') ||
+          errorString.contains('connection reset')) {
+        errorMessage =
+            'No internet connection detected. Please check your network connection and try again.';
+      } else {
+        errorMessage = 'An error occurred during login. Please try again.';
+      }
+
+      _showErrorDialog(errorMessage);
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleAdminLogin(Map<String, dynamic>? adminData) async {
+    // Use admin data from database or fallback to default
+    final adminInfo =
+        adminData ??
+        {
+          'username': 'Admin',
+          'full_name': 'System Administrator',
+          'email': 'admin@evsu.edu.ph',
+          'role': 'admin',
+        };
+
+    // Save admin session
+    await SessionService.saveSession({
+      'student_id': adminInfo['username'] ?? 'Admin',
+      'name': adminInfo['full_name'] ?? 'System Administrator',
+      'email': adminInfo['email'] ?? 'admin@evsu.edu.ph',
+      'course': 'Administration',
+      'balance': 0.0,
+      'role': adminInfo['role'] ?? 'admin',
+    }, 'admin');
+
+    _navigateToDashboard();
+  }
+
+  Future<void> _handleServiceLogin(Map<String, dynamic> serviceData) async {
+    // Save service session with required fields
+    await SessionService.saveSession({
+      'service_id': serviceData['id'].toString(),
+      'service_name': serviceData['service_name'] ?? 'Service',
+      'service_category': serviceData['service_category'] ?? 'General',
+      'operational_type': serviceData['operational_type'] ?? 'Main',
+      'main_service_id': serviceData['main_service_id']?.toString() ?? '',
+      'balance': serviceData['balance']?.toString() ?? '0.0',
+      'commission_rate': serviceData['commission_rate']?.toString() ?? '0.0',
+      'contact_person': serviceData['contact_person'] ?? '',
+      'email': serviceData['email'] ?? '',
+      'phone': serviceData['phone'] ?? '',
+      'username': serviceData['username'] ?? '',
+    }, 'service');
+
+    _navigateToDashboard();
+  }
+
+  void _navigateToDashboard() {
+    if (!mounted) return;
+
+    if (SessionService.isStudent) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const UserDashboard()),
+      );
+    } else if (SessionService.isAdmin) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const AdminDashboard()),
+      );
+    } else if (SessionService.isService) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder:
+              (_) => const ServiceDashboard(
+                serviceName: 'Main Campus Cafeteria',
+                serviceType: 'Canteen',
+              ),
+        ),
+      );
+    }
+  }
+
+  void _showErrorDialog(String message) {
+    if (!mounted) return;
+
+    // Determine icon and title based on message content
+    IconData icon;
+    String title;
+    Color iconColor;
+
+    if (message.toLowerCase().contains('internet') ||
+        message.toLowerCase().contains('connection') ||
+        message.toLowerCase().contains('network')) {
+      icon = Icons.wifi_off;
+      title = 'No Internet Connection';
+      iconColor = Colors.orange;
+    } else {
+      icon = Icons.error;
+      title = 'Login Failed';
+      iconColor = Colors.red;
+    }
+
+    // Show floating modal instead of full dialog
+    _showFloatingErrorModal(icon, title, message, iconColor);
+  }
+
+  void _showFloatingErrorModal(
+    IconData icon,
+    String title,
+    String message,
+    Color iconColor,
+  ) {
+    setState(() {
+      _floatingErrorIcon = icon;
+      _floatingErrorTitle = title;
+      _floatingErrorMessage = message;
+      _floatingErrorColor = iconColor;
+      _showFloatingError = true;
+    });
+
+    // Auto-hide after 5 seconds
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted) {
+        setState(() {
+          _showFloatingError = false;
+        });
+      }
+    });
+  }
+
+  void _hideFloatingError() {
+    setState(() {
+      _showFloatingError = false;
+    });
+  }
+
+  Widget _buildFloatingErrorModal() {
+    final screenSize = MediaQuery.of(context).size;
+    final screenWidth = screenSize.width;
+    final screenHeight = screenSize.height;
+    final safePadding = MediaQuery.of(context).padding;
+
+    // Responsive calculations
+    final isSmallScreen = screenWidth < 400;
+    final isVerySmallScreen = screenWidth < 350;
+
+    // Dynamic sizing
+    final double modalMaxWidth = 520.0;
+    final double availableWidth = screenWidth - 24.0; // keep 12px margins
+    final double modalWidth = math
+        .min(
+          availableWidth,
+          isSmallScreen ? screenWidth * 0.9 : screenWidth * 0.8,
+        )
+        .clamp(240.0, modalMaxWidth);
+    final iconSize =
+        isVerySmallScreen
+            ? 16.0
+            : isSmallScreen
+            ? 20.0
+            : 24.0;
+    final titleFontSize =
+        isVerySmallScreen
+            ? 14.0
+            : isSmallScreen
+            ? 16.0
+            : 18.0;
+    final messageFontSize =
+        isVerySmallScreen
+            ? 11.0
+            : isSmallScreen
+            ? 12.0
+            : 13.0;
+    final buttonFontSize = isVerySmallScreen ? 12.0 : 14.0;
+
+    final double desiredTop = screenHeight * 0.35; // position over inputs
+    final double top = desiredTop.clamp(
+      safePadding.top + 12.0,
+      screenHeight - 200.0,
+    );
+    final double left = (screenWidth - modalWidth) / 2;
+
+    return Positioned(
+      top: top,
+      left: left,
+      child: Material(
+        elevation: 8,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: modalWidth,
+          constraints: BoxConstraints(
+            // Cap height so it doesn't overflow on small screens
+            maxHeight: screenHeight * 0.55,
+            minWidth: 240,
+          ),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: _floatingErrorColor.withOpacity(0.3),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.15),
+                blurRadius: 15,
+                offset: const Offset(0, 5),
+              ),
+            ],
+          ),
+          child: SingleChildScrollView(
+            padding: EdgeInsets.all(isSmallScreen ? 16 : 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header with icon and close button
+                Row(
+                  children: [
+                    Container(
+                      width: isSmallScreen ? 32 : 36,
+                      height: isSmallScreen ? 32 : 36,
+                      decoration: BoxDecoration(
+                        color: _floatingErrorColor.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _floatingErrorIcon,
+                        color: _floatingErrorColor,
+                        size: iconSize,
+                      ),
+                    ),
+                    SizedBox(width: isSmallScreen ? 12 : 16),
+                    Expanded(
+                      child: Text(
+                        _floatingErrorTitle,
+                        style: TextStyle(
+                          fontSize: titleFontSize,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                        maxLines: 2,
+                        softWrap: true,
+                        overflow: TextOverflow.fade,
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: _hideFloatingError,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(
+                          Icons.close,
+                          size: isSmallScreen ? 18 : 20,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                SizedBox(height: isSmallScreen ? 12 : 16),
+
+                // Message
+                Text(
+                  _floatingErrorMessage,
+                  style: TextStyle(
+                    fontSize: messageFontSize,
+                    color: Colors.black87,
+                    height: 1.3,
+                  ),
+                  textAlign: TextAlign.center,
+                  softWrap: true,
+                ),
+
+                SizedBox(height: isSmallScreen ? 16 : 20),
+
+                // Action buttons
+                Row(
+                  children: [
+                    // Retry button for internet issues
+                    if (_floatingErrorTitle.toLowerCase().contains(
+                          'internet',
+                        ) ||
+                        _floatingErrorTitle.toLowerCase().contains(
+                          'connection',
+                        )) ...[
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            _hideFloatingError();
+                            _login();
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _floatingErrorColor,
+                            side: BorderSide(color: _floatingErrorColor),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            padding: EdgeInsets.symmetric(
+                              vertical: isSmallScreen ? 8 : 10,
+                            ),
+                          ),
+                          child: Text(
+                            'Retry',
+                            style: TextStyle(
+                              fontSize: buttonFontSize,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: isSmallScreen ? 8 : 12),
+                    ],
+
+                    // OK button
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _hideFloatingError,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _floatingErrorColor,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          padding: EdgeInsets.symmetric(
+                            vertical: isSmallScreen ? 8 : 10,
+                          ),
+                          elevation: 2,
+                        ),
+                        child: Text(
+                          'OK',
+                          style: TextStyle(
+                            fontSize: buttonFontSize,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const Color evsuRed = Color(0xFFB01212); // deep red to match EVSU look
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          // Decorative top header with downward curve
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: ClipPath(
+              clipper: _DownArcClipper(curveDepth: 32),
+              child: Container(height: 88, color: evsuRed),
+            ),
+          ),
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 96, 24, 16),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Logo + App Name
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Image.asset(
+                          'assets/letter_e.png',
+                          width: 64,
+                          height: 64,
+                        ),
+                        const Text(
+                          'campuspay',
+                          style: TextStyle(
+                            fontSize: 36,
+                            fontWeight: FontWeight.w800,
+                            color: evsuRed,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 45),
+
+                    // Internet Connection Status
+                    if (!hasInternetConnection)
+                      Container(
+                        width: double.infinity,
+                        constraints: BoxConstraints(
+                          minHeight: MediaQuery.of(context).size.height * 0.08,
+                          maxHeight: MediaQuery.of(context).size.height * 0.2,
+                        ),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: MediaQuery.of(context).size.width * 0.04,
+                          vertical: MediaQuery.of(context).size.height * 0.015,
+                        ),
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.orange[50],
+                          border: Border.all(color: Colors.orange[300]!),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.orange.withOpacity(0.1),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final screenWidth =
+                                MediaQuery.of(context).size.width;
+                            final isWideScreen = screenWidth > 400;
+                            final isVerySmallScreen = screenWidth < 320;
+
+                            if (isWideScreen) {
+                              // Horizontal layout for wider screens
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.wifi_off,
+                                    color: Colors.orange[700],
+                                    size: screenWidth * 0.055,
+                                  ),
+                                  SizedBox(width: screenWidth * 0.03),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          'No Internet Connection',
+                                          style: TextStyle(
+                                            color: Colors.orange[700],
+                                            fontSize: screenWidth * 0.035,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        SizedBox(height: screenWidth * 0.005),
+                                        Text(
+                                          'Please check your network settings.',
+                                          style: TextStyle(
+                                            color: Colors.orange[600],
+                                            fontSize: screenWidth * 0.03,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  SizedBox(width: screenWidth * 0.03),
+                                  Flexible(
+                                    child: ElevatedButton(
+                                      onPressed: () async {
+                                        // Show loading state during retry
+                                        setState(() {
+                                          hasInternetConnection = false;
+                                        });
+
+                                        final hasInternet =
+                                            await _checkInternetConnection();
+                                        setState(() {
+                                          hasInternetConnection = hasInternet;
+                                        });
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.orange[700],
+                                        foregroundColor: Colors.white,
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: screenWidth * 0.04,
+                                          vertical: screenWidth * 0.02,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                        minimumSize: Size(
+                                          screenWidth * 0.15,
+                                          0,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'Retry',
+                                        style: TextStyle(
+                                          fontSize: screenWidth * 0.03,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            } else {
+                              // Vertical layout for narrower screens
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.wifi_off,
+                                        color: Colors.orange[700],
+                                        size: screenWidth * 0.06,
+                                      ),
+                                      SizedBox(width: screenWidth * 0.025),
+                                      Expanded(
+                                        child: Text(
+                                          'No Internet Connection',
+                                          style: TextStyle(
+                                            color: Colors.orange[700],
+                                            fontSize:
+                                                isVerySmallScreen
+                                                    ? screenWidth * 0.035
+                                                    : screenWidth * 0.032,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  SizedBox(height: screenWidth * 0.025),
+                                  Text(
+                                    'Please check your network settings.',
+                                    style: TextStyle(
+                                      color: Colors.orange[600],
+                                      fontSize:
+                                          isVerySmallScreen
+                                              ? screenWidth * 0.03
+                                              : screenWidth * 0.028,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  SizedBox(height: screenWidth * 0.03),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton(
+                                      onPressed: () async {
+                                        // Show loading state during retry
+                                        setState(() {
+                                          hasInternetConnection = false;
+                                        });
+
+                                        final hasInternet =
+                                            await _checkInternetConnection();
+                                        setState(() {
+                                          hasInternetConnection = hasInternet;
+                                        });
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.orange[700],
+                                        foregroundColor: Colors.white,
+                                        padding: EdgeInsets.symmetric(
+                                          vertical: screenWidth * 0.025,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'Retry Connection',
+                                        style: TextStyle(
+                                          fontSize:
+                                              isVerySmallScreen
+                                                  ? screenWidth * 0.03
+                                                  : screenWidth * 0.028,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }
+                          },
+                        ),
+                      ),
+
+                    // Username
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Username',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: evsuRed.withValues(alpha: 0.9),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: studentIdController,
+                      keyboardType: TextInputType.text,
+                      textInputAction: TextInputAction.next,
+                      decoration: InputDecoration(
+                        hintText: 'Enter your Username',
+                        prefixIcon: const Icon(Icons.person, color: evsuRed),
+                        focusedBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(
+                            color: evsuRed,
+                            width: 2,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(color: evsuRed),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 36),
+
+                    // Password
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Password',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: evsuRed.withValues(alpha: 0.9),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: passwordController,
+                      obscureText: !isPasswordVisible,
+                      textInputAction: TextInputAction.done,
+                      decoration: InputDecoration(
+                        hintText: 'Enter your Password',
+                        prefixIcon: const Icon(Icons.lock, color: evsuRed),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            isPasswordVisible
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                            color: evsuRed,
+                          ),
+                          onPressed: () {
+                            setState(
+                              () => isPasswordVisible = !isPasswordVisible,
+                            );
+                          },
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(
+                            color: evsuRed,
+                            width: 2,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: const BorderSide(color: evsuRed),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // Forgot password
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: () {
+                          // Navigate to design-only ForgotPasswordPage (no logic yet)
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const ForgotPasswordPage(),
+                            ),
+                          );
+                        },
+                        child: const Text(
+                          'Forgot password?',
+                          style: TextStyle(
+                            color: evsuRed,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 30),
+
+                    // Login Button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: evsuRed,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed:
+                            (isLoading || !hasInternetConnection)
+                                ? null
+                                : _login,
+                        child:
+                            isLoading
+                                ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Text(
+                                  'Login',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Debug: Clear Session Button (for development)
+                    if (SessionService.isLoggedIn)
+                      Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            await SessionService.forceClearSession();
+                            setState(() {});
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Session force cleared. Please login again.',
+                                ),
+                                backgroundColor: Colors.orange,
+                              ),
+                            );
+                          },
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Colors.orange),
+                            foregroundColor: Colors.orange,
+                          ),
+                          child: const Text('Clear Session (Debug)'),
+                        ),
+                      ),
+
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Floating Error Modal
+          if (_showFloatingError) _buildFloatingErrorModal(),
+        ],
+      ),
+    );
+  }
+}
+
+class _DownArcClipper extends CustomClipper<Path> {
+  _DownArcClipper({required this.curveDepth});
+
+  final double curveDepth;
+
+  @override
+  Path getClip(Size size) {
+    final Path path = Path();
+    // Start at top-left
+    path.lineTo(0, size.height - curveDepth);
+    // Draw a downward-facing arc across the bottom of the header
+    path.quadraticBezierTo(
+      size.width / 2,
+      size.height + curveDepth,
+      size.width,
+      size.height - curveDepth,
+    );
+    // Right edge up to top-right
+    path.lineTo(size.width, 0);
+    // Close back to origin
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(_DownArcClipper oldClipper) {
+    return oldClipper.curveDepth != curveDepth;
+  }
+}
