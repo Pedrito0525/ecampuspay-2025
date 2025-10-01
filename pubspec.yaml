@@ -78,7 +78,7 @@ flutter:
     - assets/splash_bg.png
     - assets/iconblack.png
     - assets/
-    - assets/ecampuspaylogo2v.png
+    - assets/ecampuspaylogo3v.png
 
 flutter_native_splash:
   color: "#000000"
@@ -92,9 +92,9 @@ flutter_native_splash:
 flutter_icons:
   android: true
   ios: true
-  image_path: assets/ecampuspaylogo2v.png
+  image_path: assets/ecampuspaylogo3v.png
   adaptive_icon_background: "#B01212"
-  adaptive_icon_foreground: assets/ecampuspaylogo2v.png
+  adaptive_icon_foreground: assets/ecampuspaylogo3v.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

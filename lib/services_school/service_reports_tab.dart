@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/session_service.dart';
 import '../services/supabase_service.dart';
 import 'dart:convert';
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 
 class ServiceReportsTab extends StatefulWidget {
   const ServiceReportsTab({super.key});
@@ -12,19 +14,21 @@ class ServiceReportsTab extends StatefulWidget {
 
 class _ServiceReportsTabState extends State<ServiceReportsTab> {
   static const Color evsuRed = Color(0xFFB91C1C);
-  String _selectedPeriod = 'Daily';
-  final List<String> _periods = ['Daily', 'Weekly', 'Monthly', 'Yearly'];
+  // On-screen view is always Today
   DateTimeRange? _dateRange;
   // loading flag removed; overview loads immediately on period tap
   List<Map<String, dynamic>> _transactions = [];
   double _totalAmount = 0.0;
   int _totalCount = 0;
+  // Aggregations
+  Map<String, Map<String, dynamic>> _itemAggregates = {};
+  // Map<String, int> _dailyCounts = {}; // reserved for future daily chart
 
   @override
   void initState() {
     super.initState();
     // Default to today's range for "Daily". Data loads when user taps Generate.
-    _applyQuickRange(_selectedPeriod);
+    _applyQuickRange('Daily');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadTransactions();
     });
@@ -32,6 +36,11 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
 
   @override
   Widget build(BuildContext context) {
+    // DEBUG: current state for UI sections
+    // ignore: avoid_print
+    print(
+      'DEBUG ReportsTab(build): totalCount=${_totalCount}, totalAmount=${_totalAmount.toStringAsFixed(2)}, items=${_itemAggregates.length}, tx=${_transactions.length}',
+    );
     final screenSize = MediaQuery.of(context).size;
     final screenWidth = screenSize.width;
     final isWeb = screenWidth > 600;
@@ -101,9 +110,9 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: IconButton(
-                      onPressed: _exportReports,
+                      onPressed: _exportCsvWithRange,
                       icon: Icon(
-                        Icons.file_download,
+                        Icons.table_chart,
                         color: Colors.white,
                         size: isWeb ? 28 : 24,
                       ),
@@ -115,70 +124,7 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
 
             SizedBox(height: isWeb ? 30 : 24),
 
-            // Period Selector (auto-load overview on tap)
-            Container(
-              padding: EdgeInsets.all(isWeb ? 6 : 4),
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(isWeb ? 16 : 12),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: Row(
-                children:
-                    _periods
-                        .map(
-                          (period) => Expanded(
-                            child: GestureDetector(
-                              onTap: () async {
-                                setState(() {
-                                  _selectedPeriod = period;
-                                  _applyQuickRange(period);
-                                });
-                                await _loadTransactions();
-                              },
-                              child: Container(
-                                padding: EdgeInsets.symmetric(
-                                  vertical: isWeb ? 16 : (isTablet ? 14 : 12),
-                                ),
-                                decoration: BoxDecoration(
-                                  color:
-                                      _selectedPeriod == period
-                                          ? evsuRed
-                                          : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(
-                                    isWeb ? 12 : 8,
-                                  ),
-                                  boxShadow:
-                                      _selectedPeriod == period
-                                          ? [
-                                            BoxShadow(
-                                              color: evsuRed.withOpacity(0.3),
-                                              blurRadius: 8,
-                                              offset: const Offset(0, 2),
-                                            ),
-                                          ]
-                                          : null,
-                                ),
-                                child: Text(
-                                  period,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color:
-                                        _selectedPeriod == period
-                                            ? Colors.white
-                                            : Colors.grey[700],
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: isWeb ? 16 : (isTablet ? 15 : 14),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        )
-                        .toList(),
-              ),
-            ),
-
+            // Period Selector removed for on-screen view; always shows today's data
             SizedBox(height: isWeb ? 30 : 24),
 
             // Key Metrics (from fetched data)
@@ -199,7 +145,7 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '$_selectedPeriod Overview',
+                    'Today Overview',
                     style: TextStyle(
                       fontSize: isWeb ? 22 : (isTablet ? 20 : 18),
                       fontWeight: FontWeight.bold,
@@ -301,6 +247,70 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
 
             SizedBox(height: isWeb ? 30 : 24),
 
+            // Item Breakdown (Selected Range)
+            Container(
+              padding: EdgeInsets.all(isWeb ? 24 : 20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(isWeb ? 16 : 12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Item Breakdown (Selected Range)',
+                    style: TextStyle(
+                      fontSize: isWeb ? 20 : (isTablet ? 18 : 16),
+                      fontWeight: FontWeight.bold,
+                      color: evsuRed,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_itemAggregates.isEmpty)
+                    Builder(
+                      builder: (context) {
+                        // ignore: avoid_print
+                        print('DEBUG ReportsTab(build): Item breakdown empty');
+                        return Text(
+                          'No items in this period.',
+                          style: TextStyle(color: Colors.grey[600]),
+                        );
+                      },
+                    )
+                  else
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _itemAggregates.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final entry = _itemAggregates.entries.elementAt(index);
+                        final name = entry.key;
+                        final qty = entry.value['quantity'] as int;
+                        final total = (entry.value['total'] as double);
+                        return ListTile(
+                          dense: true,
+                          title: Text(name),
+                          trailing: Text(
+                            '${qty} • ₱${total.toStringAsFixed(2)}',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+            ),
+
+            SizedBox(height: isWeb ? 30 : 24),
+
             // Transactions + Export
             Container(
               padding: EdgeInsets.all(isWeb ? 24 : 20),
@@ -331,17 +341,25 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
                         ),
                       ),
                       TextButton.icon(
-                        onPressed: _transactions.isEmpty ? null : _exportExcel,
+                        onPressed: _exportCsvWithRange,
                         icon: const Icon(Icons.table_chart),
-                        label: const Text('Export Excel'),
+                        label: const Text('Export CSV'),
                       ),
                     ],
                   ),
                   const SizedBox(height: 12),
                   if (_transactions.isEmpty)
-                    Text(
-                      'No data. Pick a date range and tap Generate.',
-                      style: TextStyle(color: Colors.grey[600]),
+                    Builder(
+                      builder: (context) {
+                        // ignore: avoid_print
+                        print(
+                          'DEBUG ReportsTab(build): Transactions empty for today',
+                        );
+                        return Text(
+                          'No transactions today.',
+                          style: TextStyle(color: Colors.grey[600]),
+                        );
+                      },
                     )
                   else
                     ListView.separated(
@@ -373,188 +391,69 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
     );
   }
 
-  void _exportReports() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder:
-          (context) => Container(
-            margin: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(top: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Text(
-                    'Export Options',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: evsuRed,
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _dateRange == null
-                              ? 'Select export date range'
-                              : _formatRange(_dateRange!),
-                          style: TextStyle(
-                            color: Colors.grey[700],
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      TextButton.icon(
-                        onPressed: _pickRange,
-                        icon: const Icon(Icons.date_range),
-                        label: const Text('Pick Range'),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
-                ListTile(
-                  leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
-                  title: const Text('Export as PDF'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _exportAs('PDF');
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.table_chart, color: Colors.green),
-                  title: const Text('Export as Excel'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _exportAs('Excel');
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.email, color: evsuRed),
-                  title: const Text('Email Report'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _emailReport();
-                  },
-                ),
-                const SizedBox(height: 20),
-              ],
-            ),
-          ),
-    );
-  }
+  // Export modal removed; direct CSV export is provided via buttons
 
-  void _exportAs(String format) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Exporting $_selectedPeriod report as $format...'),
-        backgroundColor: evsuRed,
-      ),
-    );
-  }
-
-  void _emailReport() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Preparing email report...'),
-        backgroundColor: evsuRed,
-      ),
-    );
-  }
+  // Removed unused export/email helpers
 
   void _applyQuickRange(String period) {
+    // Keep internal range set to today for consistency
     final now = DateTime.now();
-    DateTime start;
-    DateTime end;
-    switch (period) {
-      case 'Weekly':
-        start = now.subtract(const Duration(days: 6));
-        end = now;
-        break;
-      case 'Monthly':
-        start = DateTime(now.year, now.month, 1);
-        end = now;
-        break;
-      case 'Yearly':
-        start = DateTime(now.year, 1, 1);
-        end = now;
-        break;
-      default:
-        start = DateTime(now.year, now.month, now.day);
-        end = now;
-    }
+    final start = DateTime(now.year, now.month, now.day);
+    final end = now;
     _dateRange = DateTimeRange(start: start, end: end);
   }
 
-  String _formatRange(DateTimeRange range) {
-    String f(DateTime d) =>
-        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-    return '${f(range.start)} to ${f(range.end)}';
-  }
-
-  Future<void> _pickRange() async {
-    final now = DateTime.now();
-    final initial =
-        _dateRange ??
-        DateTimeRange(start: now.subtract(const Duration(days: 6)), end: now);
-    final picked = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(now.year - 3),
-      lastDate: DateTime(now.year + 1),
-      initialDateRange: initial,
-    );
-    if (picked != null) {
-      setState(() => _dateRange = picked);
-    }
-  }
+  // Removed unused date range helpers
 
   Future<void> _loadTransactions() async {
-    if (_dateRange == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please pick a date range')));
-      return;
-    }
     // start fetch
     try {
+      // DEBUG: session and range
+      final nowDbg = DateTime.now();
+      // Always today for on-screen view
+      final now = DateTime.now();
+      final localStart = DateTime(now.year, now.month, now.day);
+      final localEnd = localStart.add(const Duration(days: 1));
+      final from = localStart.toUtc().toIso8601String();
+      final to = localEnd.toUtc().toIso8601String();
+
       final serviceIdStr =
           SessionService.currentUserData?['service_id']?.toString() ?? '0';
       final serviceId = int.tryParse(serviceIdStr) ?? 0;
+      final operationalType =
+          SessionService.currentUserData?['operational_type']?.toString() ??
+          'Main';
+      final mainServiceIdStr =
+          SessionService.currentUserData?['main_service_id']?.toString();
+      final rootMainId =
+          operationalType == 'Sub'
+              ? (int.tryParse(mainServiceIdStr ?? '') ?? serviceId)
+              : serviceId;
+      // DEBUG: Inputs
+      // ignore: avoid_print
+      print(
+        'DEBUG ReportsTab: nowLocal=$nowDbg, todayLocalStart=$localStart, todayLocalEnd=$localEnd',
+      );
+      print(
+        'DEBUG ReportsTab: UTC range from=$from to=$to, rootMainId=$rootMainId',
+      );
 
       await SupabaseService.initialize();
-      final from =
-          DateTime(
-            _dateRange!.start.year,
-            _dateRange!.start.month,
-            _dateRange!.start.day,
-          ).toIso8601String();
-      final to = _dateRange!.end.add(const Duration(days: 1)).toIso8601String();
 
       final res = await SupabaseService.client
           .from('service_transactions')
-          .select('id, created_at, items, total_amount')
-          .eq('service_account_id', serviceId)
+          .select(
+            'id, created_at, items, total_amount, service_account_id, main_service_id',
+          )
+          .or(
+            'main_service_id.eq.${rootMainId},service_account_id.eq.${rootMainId}',
+          )
           .gte('created_at', from)
           .lt('created_at', to)
           .order('created_at', ascending: false);
+      // DEBUG: raw result length
+      // ignore: avoid_print
+      print('DEBUG ReportsTab: query returned ${(res as List).length} rows');
 
       final tx =
           (res as List)
@@ -562,17 +461,62 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
                 (e) => Map<String, dynamic>.from(e as Map),
               )
               .toList();
+      // DEBUG: first few rows
+      for (int i = 0; i < (tx.length > 3 ? 3 : tx.length); i++) {
+        final t = tx[i];
+        // ignore: avoid_print
+        print(
+          'DEBUG ReportsTab: row[$i] id=${t['id']} created_at=${t['created_at']} total_amount=${t['total_amount']}',
+        );
+      }
       double total = 0.0;
+      final itemAgg = <String, Map<String, dynamic>>{};
+      final daily = <String, int>{};
       for (final t in tx) {
         total += (t['total_amount'] as num).toDouble();
+        final created = DateTime.tryParse(t['created_at']?.toString() ?? '');
+        if (created != null) {
+          final key =
+              '${created.year}-${created.month.toString().padLeft(2, '0')}-${created.day.toString().padLeft(2, '0')}';
+          daily[key] = (daily[key] ?? 0) + 1;
+        }
+        final items =
+            (t['items'] as List)
+                .map((e) => Map<String, dynamic>.from(e as Map))
+                .toList();
+        for (final it in items) {
+          final name = (it['name'] ?? '').toString();
+          final qty = (it['quantity'] as num?)?.toInt() ?? 1;
+          final lineTotal =
+              (it['total'] as num?)?.toDouble() ??
+              ((it['price'] as num?)?.toDouble() ?? 0.0) * qty;
+          final prev = itemAgg[name];
+          if (prev == null) {
+            itemAgg[name] = {'quantity': qty, 'total': lineTotal};
+          } else {
+            itemAgg[name] = {
+              'quantity': (prev['quantity'] as int) + qty,
+              'total': (prev['total'] as double) + lineTotal,
+            };
+          }
+        }
       }
+      // DEBUG: aggregates
+      // ignore: avoid_print
+      print(
+        'DEBUG ReportsTab: totalAmount=$total, txCount=${tx.length}, distinctItems=${itemAgg.length}',
+      );
       setState(() {
         _transactions = tx;
         _totalAmount = total;
         _totalCount = tx.length;
+        _itemAggregates = itemAgg;
+        // _dailyCounts = daily;
       });
     } catch (e) {
       if (!mounted) return;
+      // ignore: avoid_print
+      print('DEBUG ReportsTab: load error: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to load transactions: $e')),
       );
@@ -581,41 +525,177 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
     }
   }
 
-  void _exportExcel() {
-    final headers = ['Date', 'Item', 'Quantity', 'Price', 'Line Total'];
-    final rows = <List<String>>[];
-    for (final t in _transactions) {
-      final created = t['created_at']?.toString() ?? '';
-      final items =
-          (t['items'] as List)
-              .map((e) => Map<String, dynamic>.from(e as Map))
-              .toList();
-      for (final it in items) {
-        final name = (it['name'] ?? '').toString();
-        final qty = (it['quantity'] ?? 1).toString();
-        final price = ((it['price'] as num?)?.toDouble() ?? 0.0)
-            .toStringAsFixed(2);
-        final line = ((it['total'] as num?)?.toDouble() ??
-                ((it['price'] as num?)?.toDouble() ?? 0.0) *
-                    (it['quantity'] ?? 1))
-            .toStringAsFixed(2);
-        rows.add([created, name, qty, price, line]);
-      }
-    }
-    final csv = StringBuffer();
-    csv.writeln(headers.join(','));
-    for (final r in rows) {
-      csv.writeln(r.map((c) => '"${c.replaceAll('"', '""')}"').join(','));
-    }
+  // Removed old export (non-range) method; using _exportCsvWithRange instead
 
-    final bytes = utf8.encode(csv.toString());
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Excel CSV generated (${bytes.length} bytes). Implement saving/sharing as needed.',
+  Future<void> _exportCsvWithRange() async {
+    try {
+      final now = DateTime.now();
+      final initialRange =
+          _dateRange ??
+          DateTimeRange(start: now.subtract(const Duration(days: 6)), end: now);
+      final picked = await showDateRangePicker(
+        context: context,
+        firstDate: DateTime(now.year - 3),
+        lastDate: DateTime(now.year + 1),
+        initialDateRange: initialRange,
+      );
+      if (picked == null) return;
+
+      // Determine root main id
+      final serviceIdStr =
+          SessionService.currentUserData?['service_id']?.toString() ?? '0';
+      final serviceId = int.tryParse(serviceIdStr) ?? 0;
+      final operationalType =
+          SessionService.currentUserData?['operational_type']?.toString() ??
+          'Main';
+      final mainServiceIdStr =
+          SessionService.currentUserData?['main_service_id']?.toString();
+      final rootMainId =
+          operationalType == 'Sub'
+              ? (int.tryParse(mainServiceIdStr ?? '') ?? serviceId)
+              : serviceId;
+
+      await SupabaseService.initialize();
+      final localStart = DateTime(
+        picked.start.year,
+        picked.start.month,
+        picked.start.day,
+      );
+      final localEndNext = DateTime(
+        picked.end.year,
+        picked.end.month,
+        picked.end.day,
+      ).add(const Duration(days: 1));
+      final from = localStart.toUtc().toIso8601String();
+      final to = localEndNext.toUtc().toIso8601String();
+      // ignore: avoid_print
+      print(
+        'DEBUG ReportsTab(export): localStart=$localStart localEndNext=$localEndNext -> UTC from=$from to=$to',
+      );
+
+      final res = await SupabaseService.client
+          .from('service_transactions')
+          .select(
+            'id, created_at, items, total_amount, service_account_id, main_service_id',
+          )
+          .or(
+            'main_service_id.eq.${rootMainId},service_account_id.eq.${rootMainId}',
+          )
+          .gte('created_at', from)
+          .lt('created_at', to)
+          .order('created_at', ascending: false);
+
+      final tx =
+          (res as List)
+              .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e))
+              .toList();
+
+      // Build CSV rows from fetched data
+      final headers = ['Date', 'Item', 'Quantity', 'Price', 'Line Total'];
+      final rows = <List<String>>[];
+      final itemAgg = <String, Map<String, dynamic>>{};
+      double totalAmount = 0.0;
+      for (final t in tx) {
+        totalAmount += (t['total_amount'] as num).toDouble();
+        final created = t['created_at']?.toString() ?? '';
+        final items =
+            (t['items'] as List)
+                .map((e) => Map<String, dynamic>.from(e as Map))
+                .toList();
+        for (final it in items) {
+          final name = (it['name'] ?? '').toString();
+          final qtyNum = (it['quantity'] as num?)?.toInt() ?? 1;
+          final priceNum = (it['price'] as num?)?.toDouble() ?? 0.0;
+          final lineNum =
+              (it['total'] as num?)?.toDouble() ?? priceNum * qtyNum;
+          rows.add([
+            created,
+            name,
+            qtyNum.toString(),
+            priceNum.toStringAsFixed(2),
+            lineNum.toStringAsFixed(2),
+          ]);
+          final prev = itemAgg[name];
+          if (prev == null) {
+            itemAgg[name] = {'quantity': qtyNum, 'total': lineNum};
+          } else {
+            itemAgg[name] = {
+              'quantity': (prev['quantity'] as int) + qtyNum,
+              'total': (prev['total'] as double) + lineNum,
+            };
+          }
+        }
+      }
+
+      // Append summary
+      if (itemAgg.isNotEmpty) {
+        rows.add(['', '', '', '', '']);
+        rows.add(['Item', 'Total Qty', 'Total Amount', '', '']);
+        for (final e in itemAgg.entries) {
+          rows.add([
+            e.key,
+            (e.value['quantity'] as int).toString(),
+            (e.value['total'] as double).toStringAsFixed(2),
+            '',
+            '',
+          ]);
+        }
+        rows.add(['', '', '', '', '']);
+        rows.add(['Overall Total', '', totalAmount.toStringAsFixed(2), '', '']);
+      }
+
+      final csv = StringBuffer();
+      csv.writeln(headers.join(','));
+      for (final r in rows) {
+        csv.writeln(r.map((c) => '"${c.replaceAll('"', '""')}"').join(','));
+      }
+      final bytes = utf8.encode(csv.toString());
+
+      // Try interactive save
+      String defaultFileName =
+          'service_transactions_${picked.start.year}-${picked.start.month.toString().padLeft(2, '0')}-${picked.start.day.toString().padLeft(2, '0')}_to_${picked.end.year}-${picked.end.month.toString().padLeft(2, '0')}-${picked.end.day.toString().padLeft(2, '0')}.csv';
+      String? outputPath;
+      try {
+        outputPath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save CSV report',
+          fileName: defaultFileName,
+          type: FileType.custom,
+          allowedExtensions: ['csv'],
+        );
+      } catch (_) {
+        outputPath = null;
+      }
+
+      if (outputPath != null && outputPath.trim().isNotEmpty) {
+        try {
+          final file = File(outputPath);
+          await file.writeAsBytes(bytes, flush: true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Saved CSV: ${file.path} (${bytes.length} bytes)'),
+            ),
+          );
+          return;
+        } catch (writeErr) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to save: $writeErr')));
+        }
+      }
+
+      // Fallback if no path chosen
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'CSV generated (${bytes.length} bytes). Implement saving/sharing.',
+          ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('CSV export failed: $e')));
+    }
   }
 }
 

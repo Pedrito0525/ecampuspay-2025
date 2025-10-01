@@ -19,6 +19,7 @@ class ESP32BluetoothServiceAccount {
   static BluetoothCharacteristic? _txCharacteristic;
   static bool _isInitialized = false;
   static bool _isConnected = false;
+  static bool _isConnecting = false;
   static String? _connectedDeviceName;
   static String?
   _currentServiceScannerId; // Track which scanner this service should use
@@ -28,36 +29,19 @@ class ESP32BluetoothServiceAccount {
       StreamController<String>.broadcast();
   static Stream<String> get rfidDataStream => _rfidController.stream;
 
-  // Mapping from database scanner_id to actual device names
-  // ESP32 devices should be named exactly like database: EvsuPay1, EvsuPay2, etc.
+  // Mapping from database scanner_id to allowed device names
+  // Enforce strict matching: only the exact assigned name (case-insensitive)
   static Map<String, List<String>> _getScannerDeviceMapping(String scannerId) {
     return {
-      scannerId: [
-        scannerId, // Exact match (EvsuPay1, EvsuPay2, etc.)
-        'ESP32_RFID_Scanner_$scannerId',
-        'ESP32_RFID_Scanner',
-        'ESP32_$scannerId',
-        'RFID_$scannerId',
-        '${scannerId}_Scanner',
-        // Add common ESP32 variations but prioritize exact match
-      ],
+      scannerId: [scannerId, scannerId.toUpperCase(), scannerId.toLowerCase()],
     };
   }
 
-  /// Get the actual device names for a scanner ID
+  /// Get the allowed device names for a scanner ID (strict)
   static List<String> getDeviceNamesForScannerId(String scannerId) {
     // Get dynamic mapping for this scanner ID
     Map<String, List<String>> mapping = _getScannerDeviceMapping(scannerId);
     List<String> deviceNames = mapping[scannerId] ?? [];
-
-    // Add additional common variations
-    deviceNames.addAll([
-      'ESP32_RFID_Scanner', // Generic ESP32 name
-      'ESP32_Scanner',
-      'RFID_Scanner',
-      scannerId.toUpperCase(),
-      scannerId.toLowerCase(),
-    ]);
 
     // Remove duplicates
     deviceNames = deviceNames.toSet().toList();
@@ -66,69 +50,22 @@ class ESP32BluetoothServiceAccount {
     return deviceNames;
   }
 
-  /// Check if device name matches any of the target scanner names
+  /// Check if device name matches the target scanner strictly (case-insensitive exact)
   static bool isDeviceNameMatch(String deviceName, String targetScannerId) {
     print(
       "DEBUG ServiceBT: Checking if '$deviceName' matches target '$targetScannerId'",
     );
-
-    // First priority: Exact match (EvsuPay1 == EvsuPay1)
-    if (deviceName == targetScannerId) {
-      print("DEBUG ServiceBT: ✅ EXACT MATCH: $deviceName == $targetScannerId");
-      return true;
-    }
-
-    // Second priority: Case-insensitive exact match
-    if (deviceName.toLowerCase() == targetScannerId.toLowerCase()) {
+    // Strict: case-insensitive equality only
+    final bool match =
+        deviceName.trim().toLowerCase() == targetScannerId.trim().toLowerCase();
+    if (match) {
+      print("DEBUG ServiceBT: ✅ STRICT MATCH: $deviceName == $targetScannerId");
+    } else {
       print(
-        "DEBUG ServiceBT: ✅ CASE-INSENSITIVE MATCH: $deviceName == $targetScannerId",
+        "DEBUG ServiceBT: ❌ STRICT NO MATCH: '$deviceName' != '$targetScannerId'",
       );
-      return true;
     }
-
-    // Third priority: Check predefined variations
-    List<String> targetNames = getDeviceNamesForScannerId(targetScannerId);
-    for (String targetName in targetNames) {
-      if (deviceName == targetName) {
-        print("DEBUG ServiceBT: ✅ VARIATION MATCH: $deviceName == $targetName");
-        return true;
-      }
-    }
-
-    // Fourth priority: Partial matching (for flexibility)
-    for (String targetName in targetNames) {
-      if (deviceName.contains(targetName) || targetName.contains(deviceName)) {
-        print(
-          "DEBUG ServiceBT: ✅ PARTIAL MATCH: $deviceName contains $targetName",
-        );
-        return true;
-      }
-    }
-
-    // Last resort: Number-based matching for EvsuPay pattern
-    RegExp evsuPayPattern = RegExp(r'^EvsuPay\d+$', caseSensitive: false);
-    if (evsuPayPattern.hasMatch(deviceName) &&
-        evsuPayPattern.hasMatch(targetScannerId)) {
-      RegExp numberExtract = RegExp(r'\d+');
-      String? deviceNumber = numberExtract.firstMatch(deviceName)?.group(0);
-      String? targetNumber = numberExtract
-          .firstMatch(targetScannerId)
-          ?.group(0);
-
-      if (deviceNumber != null &&
-          targetNumber != null &&
-          deviceNumber == targetNumber) {
-        print(
-          "DEBUG ServiceBT: ✅ NUMBER MATCH: $deviceName (num: $deviceNumber) == $targetScannerId (num: $targetNumber)",
-        );
-        return true;
-      }
-    }
-
-    print(
-      "DEBUG ServiceBT: ❌ NO MATCH: '$deviceName' does not match '$targetScannerId'",
-    );
-    return false;
+    return match;
   }
 
   /// Initialize the Bluetooth service
@@ -185,6 +122,7 @@ class ESP32BluetoothServiceAccount {
 
   /// Check if currently connected
   static bool get isConnected => _isConnected;
+  static bool get isConnecting => _isConnecting;
 
   /// Get connected device information
   static Map<String, dynamic>? getConnectedDeviceInfo() {
@@ -211,6 +149,13 @@ class ESP32BluetoothServiceAccount {
       if (!_isInitialized) {
         bool initialized = await initialize();
         if (!initialized) return false;
+      }
+
+      if (_isConnecting) {
+        print(
+          "DEBUG ServiceBT: Skipping connect attempt; already connecting...",
+        );
+        return false;
       }
 
       // Check if we need to switch to a different scanner
@@ -243,10 +188,13 @@ class ESP32BluetoothServiceAccount {
       }
 
       // Try to find and connect to the target scanner
+      _isConnecting = true;
       bool connected = await _findAndConnectToScanner(scannerId);
+      _isConnecting = false;
       return connected;
     } catch (e) {
       print("DEBUG ServiceBT: Error connecting to assigned scanner: $e");
+      _isConnecting = false;
       return false;
     }
   }
@@ -312,37 +260,47 @@ class ESP32BluetoothServiceAccount {
 
   /// Scan for devices and connect to target scanner
   static Future<bool> _scanAndConnect(String scannerId) async {
+    final Completer<bool> completer = Completer<bool>();
+    StreamSubscription? scanSubscription;
     try {
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
+      print("DEBUG ServiceBT: Starting scan for target: $scannerId");
+      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 6));
 
-      StreamSubscription scanSubscription = FlutterBluePlus.scanResults.listen((
-        results,
-      ) async {
+      scanSubscription = FlutterBluePlus.scanResults.listen((results) async {
+        if (completer.isCompleted) return;
         for (ScanResult result in results) {
-          BluetoothDevice device = result.device;
-          String deviceName = device.platformName;
-
+          final BluetoothDevice device = result.device;
+          final String deviceName = device.platformName;
           print("DEBUG ServiceBT: Found device during scan: $deviceName");
-
           if (isDeviceNameMatch(deviceName, scannerId)) {
             print(
               "DEBUG ServiceBT: Target scanner found during scan: $deviceName",
             );
             await FlutterBluePlus.stopScan();
-            await _connectToDevice(device);
-            return; // Exit listener
+            await scanSubscription?.cancel();
+            final bool ok = await _connectToDevice(device);
+            if (!completer.isCompleted) completer.complete(ok);
+            return;
           }
         }
       });
 
-      // Wait for scan to complete
-      await Future.delayed(const Duration(seconds: 12));
-      await scanSubscription.cancel();
-      await FlutterBluePlus.stopScan();
+      // Fallback timeout: complete based on connection state when scan ends
+      Future.delayed(const Duration(seconds: 7)).then((_) async {
+        if (!completer.isCompleted) {
+          await scanSubscription?.cancel();
+          await FlutterBluePlus.stopScan();
+          completer.complete(_isConnected);
+        }
+      });
 
-      return _isConnected;
+      return await completer.future;
     } catch (e) {
       print("DEBUG ServiceBT: Error during scan: $e");
+      try {
+        await scanSubscription?.cancel();
+        await FlutterBluePlus.stopScan();
+      } catch (_) {}
       return false;
     }
   }
@@ -404,6 +362,19 @@ class ESP32BluetoothServiceAccount {
             if (value.isNotEmpty) {
               final String received = String.fromCharCodes(value).trim();
               print("DEBUG ServiceBT: NOTIFY: $received");
+              // Enforce that only the assigned scanner can send data
+              final String currentDeviceName =
+                  _connectedDeviceName ?? _connectedDevice?.platformName ?? '';
+              if (_currentServiceScannerId != null &&
+                  !isDeviceNameMatch(
+                    currentDeviceName,
+                    _currentServiceScannerId!,
+                  )) {
+                print(
+                  "DEBUG ServiceBT: Ignoring data from non-assigned device '$currentDeviceName' (assigned: '${_currentServiceScannerId!}')",
+                );
+                return;
+              }
               // Try JSON first
               try {
                 final dynamic parsed = json.decode(received);

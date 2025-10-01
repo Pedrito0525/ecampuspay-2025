@@ -28,6 +28,8 @@ class _CashierTabState extends State<CashierTab> {
     return (cat ?? '').toLowerCase().contains('org');
   }
 
+  bool get _isSingleItemMode => _isCampusServiceUnits || _isOrganization;
+
   @override
   void initState() {
     super.initState();
@@ -99,45 +101,46 @@ class _CashierTabState extends State<CashierTab> {
                 ),
               ),
 
-            // Total Display
-            Container(
-              width: double.infinity,
-              padding: EdgeInsets.all(isWeb ? 24 : 20),
-              margin: EdgeInsets.only(bottom: isWeb ? 24 : 20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: const Color(0xFFB91C1C), width: 2),
-                borderRadius: BorderRadius.circular(isWeb ? 16 : 15),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFFB91C1C).withOpacity(0.1),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    'Total Amount',
-                    style: TextStyle(
-                      fontSize: isWeb ? 16 : 14,
-                      color: const Color(0xFF666666),
-                      fontWeight: FontWeight.w500,
+            // Total Display (hidden in single-item mode)
+            if (!_isSingleItemMode)
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(isWeb ? 24 : 20),
+                margin: EdgeInsets.only(bottom: isWeb ? 24 : 20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: const Color(0xFFB91C1C), width: 2),
+                  borderRadius: BorderRadius.circular(isWeb ? 16 : 15),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFB91C1C).withOpacity(0.1),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
                     ),
-                  ),
-                  SizedBox(height: isWeb ? 8 : 5),
-                  Text(
-                    '₱${totalAmount.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: isWeb ? 36 : (isTablet ? 32 : 28),
-                      fontWeight: FontWeight.bold,
-                      color: const Color(0xFFB91C1C),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      'Total Amount',
+                      style: TextStyle(
+                        fontSize: isWeb ? 16 : 14,
+                        color: const Color(0xFF666666),
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
-                ],
+                    SizedBox(height: isWeb ? 8 : 5),
+                    Text(
+                      '₱${totalAmount.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: isWeb ? 36 : (isTablet ? 32 : 28),
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFFB91C1C),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
 
             // Product Categories
             if (isWeb) ...[
@@ -229,63 +232,64 @@ class _CashierTabState extends State<CashierTab> {
 
             SizedBox(height: isWeb ? 32 : 20),
 
-            // Action Buttons
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _clearOrder,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF6C757D),
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(
-                        vertical: isWeb ? 16 : 12,
-                        horizontal: isWeb ? 24 : 16,
+            // Action Buttons (hidden in single-item mode)
+            if (!_isSingleItemMode)
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _clearOrder,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6C757D),
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                          vertical: isWeb ? 16 : 12,
+                          horizontal: isWeb ? 24 : 16,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(isWeb ? 12 : 10),
+                        ),
+                        elevation: 2,
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(isWeb ? 12 : 10),
-                      ),
-                      elevation: 2,
-                    ),
-                    child: Text(
-                      'Clear Order',
-                      style: TextStyle(
-                        fontSize: isWeb ? 16 : (isTablet ? 14 : 12),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-                SizedBox(width: isWeb ? 16 : 10),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: totalAmount > 0 ? _processPayment : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          totalAmount > 0
-                              ? const Color(0xFFB91C1C)
-                              : const Color(0xFFCCCCCC),
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(
-                        vertical: isWeb ? 16 : 12,
-                        horizontal: isWeb ? 24 : 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(isWeb ? 12 : 10),
-                      ),
-                      elevation: totalAmount > 0 ? 3 : 0,
-                    ),
-                    child: Text(
-                      'Process Payment',
-                      style: TextStyle(
-                        fontSize: isWeb ? 16 : (isTablet ? 14 : 12),
-                        fontWeight: FontWeight.w600,
+                      child: Text(
+                        'Clear Order',
+                        style: TextStyle(
+                          fontSize: isWeb ? 16 : (isTablet ? 14 : 12),
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
+                  SizedBox(width: isWeb ? 16 : 10),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: totalAmount > 0 ? _processPayment : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor:
+                            totalAmount > 0
+                                ? const Color(0xFFB91C1C)
+                                : const Color(0xFFCCCCCC),
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                          vertical: isWeb ? 16 : 12,
+                          horizontal: isWeb ? 24 : 16,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(isWeb ? 12 : 10),
+                        ),
+                        elevation: totalAmount > 0 ? 3 : 0,
+                      ),
+                      child: Text(
+                        'Process Payment',
+                        style: TextStyle(
+                          fontSize: isWeb ? 16 : (isTablet ? 14 : 12),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
 
             SizedBox(height: isWeb ? 40 : 100), // Space for bottom navigation
           ],
@@ -518,6 +522,23 @@ class _CashierTabState extends State<CashierTab> {
   }
 
   void _selectProduct(Map<String, dynamic> product) {
+    if (_isSingleItemMode) {
+      if (product['hasSizes']) {
+        _showSizeSelectionModal(product, singleItem: true);
+      } else if (product['allowCustomAmount'] == true) {
+        _showCustomAmountDialog(product, singleItem: true);
+      } else {
+        widget.onProductSelected({
+          'id': product['id'],
+          'name': product['name'],
+          'price': (product['price'] as num).toDouble(),
+          'category': product['category'] ?? 'Custom',
+          'orderType': 'single',
+        });
+      }
+      return;
+    }
+
     if (product['hasSizes']) {
       // For products with sizes, open a floating modal to choose size
       _showSizeSelectionModal(product);
@@ -533,13 +554,16 @@ class _CashierTabState extends State<CashierTab> {
         } else {
           selectedProducts[product['id']] = 1;
         }
-        productPrices[product['id']] = product['price'];
+        productPrices[product['id']] = (product['price'] as num).toDouble();
         _calculateTotal();
       });
     }
   }
 
-  void _showSizeSelectionModal(Map<String, dynamic> product) {
+  void _showSizeSelectionModal(
+    Map<String, dynamic> product, {
+    bool singleItem = false,
+  }) {
     final String productId = product['id'].toString();
     final List<dynamic> sizesDynamic =
         (product['sizes'] ?? []) as List<dynamic>;
@@ -622,20 +646,31 @@ class _CashierTabState extends State<CashierTab> {
                           ),
                         ),
                         onTap: () {
-                          setState(() {
-                            if (selectedProducts.containsKey(productId)) {
-                              selectedProducts[productId] =
-                                  selectedProducts[productId]! + 1;
-                            } else {
-                              selectedProducts[productId] = 1;
-                            }
-                            productPrices[productId] =
-                                (size['price'] as num).toDouble();
-                            selectedSizeNames[productId] =
-                                size['name'].toString();
-                            _calculateTotal();
-                          });
-                          Navigator.pop(context);
+                          if (singleItem) {
+                            Navigator.pop(context);
+                            widget.onProductSelected({
+                              'id': productId,
+                              'name': "${product['name']} (${size['name']})",
+                              'price': (size['price'] as num).toDouble(),
+                              'category': product['category'] ?? 'Custom',
+                              'orderType': 'single',
+                            });
+                          } else {
+                            setState(() {
+                              if (selectedProducts.containsKey(productId)) {
+                                selectedProducts[productId] =
+                                    selectedProducts[productId]! + 1;
+                              } else {
+                                selectedProducts[productId] = 1;
+                              }
+                              productPrices[productId] =
+                                  (size['price'] as num).toDouble();
+                              selectedSizeNames[productId] =
+                                  size['name'].toString();
+                              _calculateTotal();
+                            });
+                            Navigator.pop(context);
+                          }
                         },
                       );
                     },
@@ -668,7 +703,10 @@ class _CashierTabState extends State<CashierTab> {
     });
   }
 
-  void _showCustomAmountDialog(Map<String, dynamic> product) {
+  void _showCustomAmountDialog(
+    Map<String, dynamic> product, {
+    bool singleItem = false,
+  }) {
     final amountController = TextEditingController(
       text: product['price'].toStringAsFixed(0),
     );
@@ -706,17 +744,28 @@ class _CashierTabState extends State<CashierTab> {
               onPressed: () {
                 final customAmount = double.tryParse(amountController.text);
                 if (customAmount != null && customAmount > 0) {
-                  setState(() {
-                    if (selectedProducts.containsKey(product['id'])) {
-                      selectedProducts[product['id']] =
-                          selectedProducts[product['id']]! + 1;
-                    } else {
-                      selectedProducts[product['id']] = 1;
-                    }
-                    productPrices[product['id']] = customAmount;
-                    _calculateTotal();
-                  });
-                  Navigator.pop(context);
+                  if (singleItem) {
+                    Navigator.pop(context);
+                    widget.onProductSelected({
+                      'id': product['id'],
+                      'name': product['name'],
+                      'price': customAmount,
+                      'category': product['category'] ?? 'Custom',
+                      'orderType': 'single',
+                    });
+                  } else {
+                    setState(() {
+                      if (selectedProducts.containsKey(product['id'])) {
+                        selectedProducts[product['id']] =
+                            selectedProducts[product['id']]! + 1;
+                      } else {
+                        selectedProducts[product['id']] = 1;
+                      }
+                      productPrices[product['id']] = customAmount;
+                      _calculateTotal();
+                    });
+                    Navigator.pop(context);
+                  }
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(

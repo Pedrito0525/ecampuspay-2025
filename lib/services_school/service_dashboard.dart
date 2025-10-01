@@ -13,6 +13,72 @@ import '../services/esp32_bluetooth_service_account.dart';
 import '../login_page.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+// Removed SettingsTab per requirements (settings is a separate screen)
+
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({Key? key}) : super(key: key);
+  @override
+  Widget build(BuildContext context) {
+    final screenSize = MediaQuery.of(context).size;
+    final screenWidth = screenSize.width;
+    final isWeb = screenWidth > 600;
+    final isTablet = screenWidth > 480 && screenWidth <= 1024;
+    final horizontalPadding = isWeb ? 24.0 : (isTablet ? 20.0 : 16.0);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Settings'),
+        backgroundColor: const Color(0xFFB91C1C),
+      ),
+      body: SingleChildScrollView(
+        padding: EdgeInsets.all(horizontalPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            _SettingsItem(
+              title: 'Profile',
+              subtitle: 'View and edit account info',
+            ),
+            _SettingsItem(title: 'Notifications', subtitle: 'Manage alerts'),
+            _SettingsItem(title: 'Scanner', subtitle: 'View assigned scanner'),
+            _SettingsItem(title: 'Appearance', subtitle: 'Theme preferences'),
+            _SettingsItem(title: 'About', subtitle: 'Version and info'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsItem extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  const _SettingsItem({required this.title, required this.subtitle});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE9ECEF)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ListTile(
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () {},
+      ),
+    );
+  }
+}
+
 class ServiceDashboard extends StatefulWidget {
   final String serviceName;
   final String serviceType;
@@ -44,6 +110,8 @@ class _ServiceDashboardState extends State<ServiceDashboard>
 
   // Connection monitoring
   Timer? _connectionMonitorTimer;
+  DateTime? _lastReconnectAttemptAt;
+  final Duration _reconnectInterval = const Duration(seconds: 6);
 
   @override
   void initState() {
@@ -214,19 +282,30 @@ class _ServiceDashboardState extends State<ServiceDashboard>
 
     try {
       final currentConnectionState = ESP32BluetoothServiceAccount.isConnected;
+
+      // Update UI if state changed
       if (currentConnectionState != _scannerConnected) {
         setState(() {
           _scannerConnected = currentConnectionState;
         });
-
         if (currentConnectionState) {
           print("DEBUG: Scanner reconnected automatically");
-        } else {
-          print("DEBUG: Scanner disconnected, attempting reconnection...");
-          // Try to reconnect to assigned scanner
-          if (_assignedScannerId != null) {
-            await _connectToAssignedScanner(_assignedScannerId!);
-          }
+        }
+      }
+
+      // Proactive reconnect attempts while disconnected
+      if (!currentConnectionState && _assignedScannerId != null) {
+        final bool isConnecting = ESP32BluetoothServiceAccount.isConnecting;
+        final now = DateTime.now();
+        final shouldAttempt =
+            _lastReconnectAttemptAt == null ||
+            now.difference(_lastReconnectAttemptAt!) >= _reconnectInterval;
+        if (!isConnecting && shouldAttempt) {
+          _lastReconnectAttemptAt = now;
+          print(
+            'DEBUG: Proactive reconnect attempt to scanner ${_assignedScannerId}...',
+          );
+          await _connectToAssignedScanner(_assignedScannerId!);
         }
       }
     } catch (e) {
@@ -487,9 +566,10 @@ class _ServiceDashboardState extends State<ServiceDashboard>
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       _buildNavItem('🏠', 'Home', 0, isWeb, isTablet),
-                      _buildNavItem('🏪', 'Service', 1, isWeb, isTablet),
-                      _buildNavItem('📊', 'Sales', 2, isWeb, isTablet),
-                      _buildNavItem('⚙️', 'Settings', 3, isWeb, isTablet),
+                      _buildNavItem('🏪', 'Cashier', 1, isWeb, isTablet),
+                      _buildNavItem('🧰', 'Manage', 2, isWeb, isTablet),
+                      _buildNavItem('📊', 'Reports', 3, isWeb, isTablet),
+                      _buildNavItem('⚙️', 'Settings', -2, isWeb, isTablet),
                       _buildNavItem('🚪', 'Logout', -1, isWeb, isTablet),
                     ],
                   ),
@@ -516,6 +596,10 @@ class _ServiceDashboardState extends State<ServiceDashboard>
         onTap: () {
           if (label == 'Logout') {
             _logout();
+          } else if (label == 'Settings') {
+            Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
           } else if (tabIndex >= 0) {
             _tabController.animateTo(tabIndex);
           }

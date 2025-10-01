@@ -92,10 +92,7 @@ class _PaymentScreenState extends State<PaymentScreen>
         paymentZoneColor = const Color(0xFFFFC107);
       });
 
-      bool connected =
-          await ESP32BluetoothServiceAccount.connectToAssignedScanner(
-            widget.assignedScannerId!,
-          );
+      final bool connected = await _ensureConnected(widget.assignedScannerId!);
 
       if (!mounted) return;
       if (!connected) {
@@ -123,6 +120,26 @@ class _PaymentScreenState extends State<PaymentScreen>
         _handleRFIDTap(cardId);
       }
     });
+  }
+
+  Future<bool> _ensureConnected(String assignedScannerId) async {
+    // Try for up to ~12 seconds, polling every 1s; avoid overlapping attempts
+    const int maxAttempts = 12;
+    for (int i = 0; i < maxAttempts; i++) {
+      if (ESP32BluetoothServiceAccount.isConnected) return true;
+      final bool connecting = ESP32BluetoothServiceAccount.isConnecting;
+      if (!connecting) {
+        // Fire a connect attempt
+        // Ignore the boolean result here; we'll poll isConnected on next tick
+        // to avoid treating an in-progress state as failure
+        // ignore: unused_local_variable
+        final _ = await ESP32BluetoothServiceAccount.connectToAssignedScanner(
+          assignedScannerId,
+        );
+      }
+      await Future.delayed(const Duration(seconds: 1));
+    }
+    return ESP32BluetoothServiceAccount.isConnected;
   }
 
   Future<void> _startPaymentScanner() async {
@@ -154,7 +171,7 @@ class _PaymentScreenState extends State<PaymentScreen>
           paymentZoneColor = const Color(0xFF28A745);
         });
       } else {
-        // If failed, attempt one reconnect then retry once
+        // If failed, attempt reconnect-with-retry then retry start once more
         if (!ESP32BluetoothServiceAccount.isConnected) {
           setState(() {
             paymentStatus = 'Reconnecting to ${widget.assignedScannerId}...';
@@ -162,10 +179,11 @@ class _PaymentScreenState extends State<PaymentScreen>
             paymentZoneColor = const Color(0xFFFFC107);
           });
 
-          bool reconnected =
-              await ESP32BluetoothServiceAccount.connectToAssignedScanner(
-                widget.assignedScannerId ?? '',
-              );
+          final bool reconnected =
+              widget.assignedScannerId != null &&
+                      widget.assignedScannerId!.isNotEmpty
+                  ? await _ensureConnected(widget.assignedScannerId!)
+                  : false;
 
           if (reconnected) {
             scannerStarted =
@@ -461,7 +479,7 @@ class _PaymentScreenState extends State<PaymentScreen>
       final serviceResponse =
           await SupabaseService.client
               .from('service_accounts')
-              .select('balance, main_service_id')
+              .select('balance, main_service_id, operational_type')
               .eq('id', serviceAccountId)
               .single();
 
@@ -469,16 +487,30 @@ class _PaymentScreenState extends State<PaymentScreen>
 
       final currentUserBalance = (userResponse['balance'] as num).toDouble();
       final currentServiceBalance =
-          (serviceResponse['balance'] as num).toDouble();
+          (serviceResponse['balance'] as num?)?.toDouble() ?? 0.0;
       final mainServiceId = serviceResponse['main_service_id'] as int?;
+      final operationalTypeDb =
+          serviceResponse['operational_type']?.toString() ?? operationalType;
 
       print(
         'DEBUG: Current balances - User: $currentUserBalance, Service: $currentServiceBalance',
       );
 
+      // Determine which account receives the balance credit
+      final bool isSubAccount = operationalTypeDb == 'Sub';
+      final int? creditAccountId =
+          isSubAccount ? mainServiceId : serviceAccountId;
+
+      if (isSubAccount && creditAccountId == null) {
+        return {
+          'success': false,
+          'error':
+              'Fallback payment processing failed: Missing main service for Sub account',
+        };
+      }
+
       // Calculate new balances
       final newUserBalance = currentUserBalance - amount;
-      final newServiceBalance = currentServiceBalance + amount;
 
       print(
         'DEBUG: Updating user balance from $currentUserBalance to $newUserBalance',
@@ -494,44 +526,57 @@ class _PaymentScreenState extends State<PaymentScreen>
 
       print('DEBUG: User balance update result: $userUpdateResult');
 
+      // Update credited account balance: Main for Sub accounts, otherwise current service
       print(
-        'DEBUG: Updating service balance from $currentServiceBalance to $newServiceBalance for service $serviceAccountId',
+        'DEBUG: Updating credited service balance for account ${creditAccountId} (+$amount)',
       );
-      // Update service account balance
+      final int creditedId = creditAccountId!;
+      // Fetch current credited balance first
+      final creditedBeforeResp =
+          await SupabaseService.client
+              .from('service_accounts')
+              .select('balance')
+              .eq('id', creditedId)
+              .single();
+      final creditedPrevBalance =
+          (creditedBeforeResp['balance'] as num?)?.toDouble() ?? 0.0;
+
+      final creditedNewBalance = creditedPrevBalance + amount;
       final serviceUpdateResult = await SupabaseService.client
           .from('service_accounts')
           .update({
-            'balance': newServiceBalance,
+            'balance': creditedNewBalance,
             'updated_at': DateTime.now().toIso8601String(),
           })
-          .eq('id', serviceAccountId);
+          .eq('id', creditedId);
 
       print('DEBUG: Service balance update result: $serviceUpdateResult');
 
-      // Verify the service account balance was actually updated
+      // Verify the credited account balance was actually updated
       final verifyServiceResponse =
           await SupabaseService.client
               .from('service_accounts')
               .select('balance')
-              .eq('id', serviceAccountId)
+              .eq('id', creditedId)
               .single();
 
-      final actualServiceBalance =
-          (verifyServiceResponse['balance'] as num).toDouble();
+      final actualCreditedBalance =
+          (verifyServiceResponse['balance'] as num?)?.toDouble() ??
+          creditedNewBalance;
       print(
-        'DEBUG: Actual service balance after update: $actualServiceBalance (expected: $newServiceBalance)',
+        'DEBUG: Actual credited balance after update: $actualCreditedBalance (expected: $creditedNewBalance)',
       );
 
-      if (actualServiceBalance != newServiceBalance) {
+      if (actualCreditedBalance != creditedNewBalance) {
         print(
-          'WARNING: Service balance update failed! Expected $newServiceBalance but got $actualServiceBalance',
+          'WARNING: Service balance update failed! Expected $creditedNewBalance but got $actualCreditedBalance',
         );
       }
 
       // Create service transaction using SupabaseService method
       final transactionResult = await SupabaseService.createServiceTransaction(
         serviceAccountId: serviceAccountId,
-        operationalType: operationalType,
+        operationalType: operationalTypeDb,
         studentId: studentId, // Real student_id from auth_students.student_id
         items: transactionItems,
         totalAmount: amount,
@@ -541,10 +586,11 @@ class _PaymentScreenState extends State<PaymentScreen>
           'student_id': studentId, // Store student_id in metadata for filtering
           'previous_user_balance': currentUserBalance,
           'new_user_balance': newUserBalance,
-          'previous_service_balance': currentServiceBalance,
-          'new_service_balance': newServiceBalance,
+          'previous_service_balance': creditedPrevBalance,
+          'new_service_balance': creditedNewBalance,
           'payment_method': 'RFID',
           'processed_at': DateTime.now().toIso8601String(),
+          'credited_account_id': creditedId,
         },
       );
 
@@ -560,8 +606,9 @@ class _PaymentScreenState extends State<PaymentScreen>
           'amount': amount,
           'previous_user_balance': currentUserBalance,
           'new_user_balance': newUserBalance,
-          'previous_service_balance': currentServiceBalance,
-          'new_service_balance': newServiceBalance,
+          'previous_service_balance': creditedPrevBalance,
+          'new_service_balance': creditedNewBalance,
+          'credited_account_id': creditedId,
         };
       } else {
         throw Exception(transactionResult['message']);

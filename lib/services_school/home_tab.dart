@@ -13,6 +13,7 @@ class HomeTab extends StatefulWidget {
 
 class _HomeTabState extends State<HomeTab> {
   StreamSubscription<List<Map<String, dynamic>>>? _balanceSubscription;
+  double _todaysSales = 0.0;
 
   @override
   void initState() {
@@ -21,9 +22,13 @@ class _HomeTabState extends State<HomeTab> {
     final operationalType =
         SessionService.currentUserData?['operational_type']?.toString() ??
         'Main';
+    // ignore: avoid_print
+    print('DEBUG HomeTab: init, operationalType=$operationalType');
     if (operationalType == 'Main') {
+      _fetchInitialServiceBalance();
       _subscribeToServiceBalance();
     }
+    _loadTodaysSales();
   }
 
   @override
@@ -47,6 +52,9 @@ class _HomeTabState extends State<HomeTab> {
     final int? serviceId = int.tryParse(serviceIdStr);
     if (serviceId == null) return;
 
+    // ignore: avoid_print
+    print('DEBUG HomeTab: subscribing to service_accounts id=$serviceId');
+
     try {
       _balanceSubscription?.cancel();
     } catch (_) {}
@@ -57,14 +65,50 @@ class _HomeTabState extends State<HomeTab> {
         .eq('id', serviceId)
         .limit(1)
         .listen((rows) {
+          // ignore: avoid_print
+          print('DEBUG HomeTab: realtime rows len=${rows.length}');
           if (rows.isEmpty) return;
           final row = rows.first;
           final newBalance = double.tryParse(row['balance']?.toString() ?? '');
           if (newBalance != null) {
+            // ignore: avoid_print
+            print('DEBUG HomeTab: realtime balance=$newBalance');
             SessionService.currentUserData?['balance'] = newBalance.toString();
             if (mounted) setState(() {});
           }
         });
+  }
+
+  Future<void> _fetchInitialServiceBalance() async {
+    try {
+      final serviceIdStr =
+          SessionService.currentUserData?['service_id']?.toString();
+      if (serviceIdStr == null || serviceIdStr.isEmpty) return;
+      final int? serviceId = int.tryParse(serviceIdStr);
+      if (serviceId == null) return;
+
+      // ignore: avoid_print
+      print('DEBUG HomeTab: fetching initial balance for id=$serviceId');
+      final row =
+          await SupabaseService.client
+              .from('service_accounts')
+              .select('balance')
+              .eq('id', serviceId)
+              .maybeSingle();
+      if (row != null) {
+        final newBalance = double.tryParse(row['balance']?.toString() ?? '');
+        if (newBalance != null) {
+          // ignore: avoid_print
+          print('DEBUG HomeTab: initial balance=$newBalance');
+          SessionService.currentUserData?['balance'] = newBalance.toString();
+          if (mounted) setState(() {});
+        }
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('DEBUG HomeTab: initial balance error: $e');
+      // ignore errors; realtime will still update
+    }
   }
 
   @override
@@ -78,6 +122,7 @@ class _HomeTabState extends State<HomeTab> {
           SessionService.currentUserData?['balance']?.toString() ?? '0',
         ) ??
         0.0;
+    final todaysSalesStr = '₱${_todaysSales.toStringAsFixed(2)}';
 
     final serviceName =
         SessionService.currentUserData?['service_name']?.toString() ??
@@ -264,7 +309,7 @@ class _HomeTabState extends State<HomeTab> {
               Expanded(
                 child: _buildStatCard(
                   title: 'Today\'s Sales',
-                  value: '₱0.00',
+                  value: todaysSalesStr,
                   icon: Icons.trending_up,
                   color: Colors.green,
                   isWeb: isWeb,
@@ -358,6 +403,59 @@ class _HomeTabState extends State<HomeTab> {
         ],
       ),
     );
+  }
+
+  Future<void> _loadTodaysSales() async {
+    try {
+      await SupabaseService.initialize();
+      final now = DateTime.now();
+      final localStart = DateTime(now.year, now.month, now.day);
+      final localEndNext = localStart.add(const Duration(days: 1));
+      final from = localStart.toUtc().toIso8601String();
+      final to = localEndNext.toUtc().toIso8601String();
+
+      final serviceIdStr =
+          SessionService.currentUserData?['service_id']?.toString() ?? '0';
+      final serviceId = int.tryParse(serviceIdStr) ?? 0;
+      final operationalType =
+          SessionService.currentUserData?['operational_type']?.toString() ??
+          'Main';
+      final mainServiceIdStr =
+          SessionService.currentUserData?['main_service_id']?.toString();
+      final rootMainId =
+          operationalType == 'Sub'
+              ? (int.tryParse(mainServiceIdStr ?? '') ?? serviceId)
+              : serviceId;
+
+      // ignore: avoid_print
+      print(
+        'DEBUG HomeTab: today localStart=$localStart localEndNext=$localEndNext, UTC from=$from to=$to, rootMainId=$rootMainId',
+      );
+
+      final res = await SupabaseService.client
+          .from('service_transactions')
+          .select(
+            'total_amount, main_service_id, service_account_id, created_at',
+          )
+          .or(
+            'main_service_id.eq.${rootMainId},service_account_id.eq.${rootMainId}',
+          )
+          .gte('created_at', from)
+          .lt('created_at', to);
+
+      double sum = 0.0;
+      for (final row in (res as List)) {
+        sum += ((row['total_amount'] as num?)?.toDouble() ?? 0.0);
+      }
+      // ignore: avoid_print
+      print(
+        'DEBUG HomeTab: today sales rows=${(res as List).length}, sum=$sum',
+      );
+      if (mounted) setState(() => _todaysSales = sum);
+    } catch (e) {
+      // ignore: avoid_print
+      print('DEBUG HomeTab: load today sales error: $e');
+    }
   }
 
   Widget _buildActionCard({
