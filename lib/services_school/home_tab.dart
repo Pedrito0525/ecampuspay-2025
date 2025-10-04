@@ -14,6 +14,8 @@ class HomeTab extends StatefulWidget {
 class _HomeTabState extends State<HomeTab> {
   StreamSubscription<List<Map<String, dynamic>>>? _balanceSubscription;
   double _todaysSales = 0.0;
+  List<Map<String, dynamic>> _recentActivities = [];
+  bool _isLoadingActivities = true;
 
   @override
   void initState() {
@@ -29,6 +31,7 @@ class _HomeTabState extends State<HomeTab> {
       _subscribeToServiceBalance();
     }
     _loadTodaysSales();
+    _loadRecentActivities();
   }
 
   @override
@@ -291,6 +294,25 @@ class _HomeTabState extends State<HomeTab> {
             ],
           ),
 
+          const SizedBox(height: 16),
+
+          Row(
+            children: [
+              Expanded(
+                child: _buildActionCard(
+                  title: 'Profile Settings',
+                  subtitle: 'Update service information',
+                  icon: Icons.settings,
+                  color: Colors.purple,
+                  onTap: () => _showProfileSettingsDialog(),
+                  isWeb: isWeb,
+                ),
+              ),
+              const SizedBox(width: 16),
+              const Expanded(child: SizedBox.shrink()),
+            ],
+          ),
+
           const SizedBox(height: 24),
 
           // Balance Overview Cards
@@ -391,12 +413,32 @@ class _HomeTabState extends State<HomeTab> {
                   ],
                 ),
                 const SizedBox(height: 16),
-                _buildActivityItem(
-                  'No recent activity',
-                  'Start by topping up students or making sales',
-                  Icons.info_outline,
-                  Colors.grey,
-                ),
+                if (_isLoadingActivities) ...[
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: CircularProgressIndicator(),
+                    ),
+                  ),
+                ] else if (_recentActivities.isEmpty) ...[
+                  _buildActivityItem(
+                    'No recent activity',
+                    'Start by topping up students or making sales',
+                    Icons.info_outline,
+                    Colors.grey,
+                    null,
+                  ),
+                ] else ...[
+                  ..._recentActivities.map(
+                    (activity) => _buildActivityItem(
+                      activity['title'] as String,
+                      activity['subtitle'] as String,
+                      activity['icon'] as IconData,
+                      activity['color'] as Color,
+                      DateTime.parse(activity['created_at'] as String),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -455,6 +497,108 @@ class _HomeTabState extends State<HomeTab> {
     } catch (e) {
       // ignore: avoid_print
       print('DEBUG HomeTab: load today sales error: $e');
+    }
+  }
+
+  Future<void> _loadRecentActivities() async {
+    try {
+      await SupabaseService.initialize();
+      final serviceIdStr =
+          SessionService.currentUserData?['service_id']?.toString() ?? '0';
+      final serviceId = int.tryParse(serviceIdStr) ?? 0;
+      final operationalType =
+          SessionService.currentUserData?['operational_type']?.toString() ??
+          'Main';
+      final mainServiceIdStr =
+          SessionService.currentUserData?['main_service_id']?.toString();
+      final rootMainId =
+          operationalType == 'Sub'
+              ? (int.tryParse(mainServiceIdStr ?? '') ?? serviceId)
+              : serviceId;
+
+      final List<Map<String, dynamic>> activities = [];
+
+      // Get top-up transactions (where this service account processed top-ups)
+      try {
+        final topUpTransactions = await SupabaseService.client
+            .from('top_up_transactions')
+            .select(
+              'id, student_id, amount, created_at, processed_by, transaction_type',
+            )
+            .eq('processed_by', SessionService.currentUserName)
+            .order('created_at', ascending: false)
+            .limit(10);
+
+        for (final transaction in topUpTransactions) {
+          activities.add({
+            'id': transaction['id'],
+            'type': 'top_up',
+            'title': 'Student Top-up',
+            'subtitle':
+                'Topped up ₱${(transaction['amount'] as num).toStringAsFixed(2)} to student ${transaction['student_id']}',
+            'amount': transaction['amount'],
+            'created_at': transaction['created_at'],
+            'icon': Icons.person_add,
+            'color': Colors.green,
+          });
+        }
+      } catch (e) {
+        print('DEBUG HomeTab: Error loading top-up transactions: $e');
+      }
+
+      // Get service transactions (payments made by students to this service)
+      try {
+        final serviceTransactions = await SupabaseService.client
+            .from('service_transactions')
+            .select('id, student_id, total_amount, created_at, items')
+            .or(
+              'main_service_id.eq.${rootMainId},service_account_id.eq.${rootMainId}',
+            )
+            .order('created_at', ascending: false)
+            .limit(10);
+
+        for (final transaction in serviceTransactions) {
+          final items = transaction['items'] as List?;
+          final firstItem = items?.isNotEmpty == true ? items!.first : null;
+          final itemName = firstItem?['name']?.toString() ?? 'Service Payment';
+
+          activities.add({
+            'id': transaction['id'],
+            'type': 'payment',
+            'title': 'Payment Received',
+            'subtitle':
+                '₱${(transaction['total_amount'] as num).toStringAsFixed(2)} for $itemName from student ${transaction['student_id']}',
+            'amount': transaction['total_amount'],
+            'created_at': transaction['created_at'],
+            'icon': Icons.payment,
+            'color': Colors.blue,
+          });
+        }
+      } catch (e) {
+        print('DEBUG HomeTab: Error loading service transactions: $e');
+      }
+
+      // Sort all activities by created_at (most recent first)
+      activities.sort((a, b) {
+        final aTime = DateTime.parse(a['created_at']);
+        final bTime = DateTime.parse(b['created_at']);
+        return bTime.compareTo(aTime);
+      });
+
+      // Take only the 10 most recent activities for home tab
+      if (mounted) {
+        setState(() {
+          _recentActivities = activities.take(10).toList();
+          _isLoadingActivities = false;
+        });
+      }
+    } catch (e) {
+      print('DEBUG HomeTab: Error loading recent activities: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingActivities = false;
+        });
+      }
     }
   }
 
@@ -578,10 +722,12 @@ class _HomeTabState extends State<HomeTab> {
     String subtitle,
     IconData icon,
     Color color,
+    DateTime? dateTime,
   ) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 40,
@@ -603,18 +749,84 @@ class _HomeTabState extends State<HomeTab> {
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
                   ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
                 ),
+                if (dateTime != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    _formatDateTime(dateTime),
+                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ],
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    // Convert UTC to local time (assuming UTC+8 for Philippines)
+    // Supabase stores datetime in UTC, so we add 8 hours to get local time
+    final localDateTime = dateTime.add(const Duration(hours: 8));
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final activityDate = DateTime(
+      localDateTime.year,
+      localDateTime.month,
+      localDateTime.day,
+    );
+
+    String dateStr;
+    if (activityDate == today) {
+      dateStr = 'Today';
+    } else if (activityDate == yesterday) {
+      dateStr = 'Yesterday';
+    } else {
+      // Format as "Oct 1, 2025"
+      final months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+      dateStr =
+          '${months[localDateTime.month - 1]} ${localDateTime.day}, ${localDateTime.year}';
+    }
+
+    // Format time as "9:56 am" using local time
+    final hour =
+        localDateTime.hour == 0
+            ? 12
+            : (localDateTime.hour > 12
+                ? localDateTime.hour - 12
+                : localDateTime.hour);
+    final minute = localDateTime.minute.toString().padLeft(2, '0');
+    final amPm = localDateTime.hour < 12 ? 'am' : 'pm';
+    final timeStr = '$hour:$minute $amPm';
+
+    return '$dateStr $timeStr';
   }
 
   void _showTopUpDialog() {
@@ -924,6 +1136,7 @@ class _HomeTabState extends State<HomeTab> {
       Navigator.pop(context); // Close loading dialog
 
       setState(() {}); // Refresh the UI
+      _loadRecentActivities(); // Refresh recent activities
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -947,27 +1160,505 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
+  Future<List<Map<String, dynamic>>> _loadAllTransactions() async {
+    try {
+      await SupabaseService.initialize();
+      final serviceIdStr =
+          SessionService.currentUserData?['service_id']?.toString() ?? '0';
+      final serviceId = int.tryParse(serviceIdStr) ?? 0;
+      final operationalType =
+          SessionService.currentUserData?['operational_type']?.toString() ??
+          'Main';
+      final mainServiceIdStr =
+          SessionService.currentUserData?['main_service_id']?.toString();
+      final rootMainId =
+          operationalType == 'Sub'
+              ? (int.tryParse(mainServiceIdStr ?? '') ?? serviceId)
+              : serviceId;
+
+      final List<Map<String, dynamic>> activities = [];
+
+      // Get top-up transactions (where this service account processed top-ups)
+      try {
+        final topUpTransactions = await SupabaseService.client
+            .from('top_up_transactions')
+            .select(
+              'id, student_id, amount, created_at, processed_by, transaction_type',
+            )
+            .eq('processed_by', SessionService.currentUserName)
+            .order('created_at', ascending: false)
+            .limit(50); // Load more for history modal
+
+        for (final transaction in topUpTransactions) {
+          activities.add({
+            'id': transaction['id'],
+            'type': 'top_up',
+            'title': 'Student Top-up',
+            'subtitle':
+                'Topped up ₱${(transaction['amount'] as num).toStringAsFixed(2)} to student ${transaction['student_id']}',
+            'amount': transaction['amount'],
+            'created_at': transaction['created_at'],
+            'icon': Icons.person_add,
+            'color': Colors.green,
+          });
+        }
+      } catch (e) {
+        print(
+          'DEBUG HomeTab: Error loading top-up transactions for history: $e',
+        );
+      }
+
+      // Get service transactions (payments made by students to this service)
+      try {
+        final serviceTransactions = await SupabaseService.client
+            .from('service_transactions')
+            .select('id, student_id, total_amount, created_at, items')
+            .or(
+              'main_service_id.eq.${rootMainId},service_account_id.eq.${rootMainId}',
+            )
+            .order('created_at', ascending: false)
+            .limit(50); // Load more for history modal
+
+        for (final transaction in serviceTransactions) {
+          final items = transaction['items'] as List?;
+          final firstItem = items?.isNotEmpty == true ? items!.first : null;
+          final itemName = firstItem?['name']?.toString() ?? 'Service Payment';
+
+          activities.add({
+            'id': transaction['id'],
+            'type': 'payment',
+            'title': 'Payment Received',
+            'subtitle':
+                '₱${(transaction['total_amount'] as num).toStringAsFixed(2)} for $itemName from student ${transaction['student_id']}',
+            'amount': transaction['total_amount'],
+            'created_at': transaction['created_at'],
+            'icon': Icons.payment,
+            'color': Colors.blue,
+          });
+        }
+      } catch (e) {
+        print(
+          'DEBUG HomeTab: Error loading service transactions for history: $e',
+        );
+      }
+
+      // Sort all activities by created_at (most recent first)
+      activities.sort((a, b) {
+        final aTime = DateTime.parse(a['created_at']);
+        final bTime = DateTime.parse(b['created_at']);
+        return bTime.compareTo(aTime);
+      });
+
+      return activities;
+    } catch (e) {
+      print('DEBUG HomeTab: Error loading all transactions: $e');
+      return [];
+    }
+  }
+
   void _showTransactionHistory() {
     showDialog(
       context: context,
       builder:
-          (context) => AlertDialog(
-            title: const Text('Transaction History'),
-            content: const Text(
-              'Transaction history feature will be implemented here.\n\n'
-              'This will show:\n'
-              '• Student top-ups made\n'
-              '• Payment transactions\n'
-              '• Balance changes\n'
-              '• Fee deductions',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
-              ),
-            ],
+          (context) => StatefulBuilder(
+            builder: (context, setState) {
+              final screenSize = MediaQuery.of(context).size;
+              final isSmallScreen = screenSize.width < 600;
+
+              return Dialog(
+                insetPadding: EdgeInsets.symmetric(
+                  horizontal: isSmallScreen ? 16 : 32,
+                  vertical: isSmallScreen ? 16 : 32,
+                ),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: screenSize.width * (isSmallScreen ? 0.95 : 0.9),
+                    maxHeight: screenSize.height * (isSmallScreen ? 0.9 : 0.8),
+                  ),
+                  child: Container(
+                    width: double.infinity,
+                    height: double.infinity,
+                    padding: EdgeInsets.all(isSmallScreen ? 16 : 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Header
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Transaction History',
+                                style: TextStyle(
+                                  fontSize: isSmallScreen ? 18 : 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(Icons.close),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: isSmallScreen ? 12 : 16),
+
+                        // Loading or Content
+                        Expanded(
+                          child: FutureBuilder<List<Map<String, dynamic>>>(
+                            future: _loadAllTransactions(),
+                            builder: (context, snapshot) {
+                              if (snapshot.connectionState ==
+                                  ConnectionState.waiting) {
+                                return const Center(
+                                  child: CircularProgressIndicator(),
+                                );
+                              }
+
+                              if (snapshot.hasError) {
+                                return Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Text(
+                                      'Error loading transactions: ${snapshot.error}',
+                                      style: const TextStyle(color: Colors.red),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                );
+                              }
+
+                              final activities = snapshot.data ?? [];
+
+                              if (activities.isEmpty) {
+                                return const Center(
+                                  child: Padding(
+                                    padding: EdgeInsets.all(16),
+                                    child: Text(
+                                      'No transaction history found',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        color: Colors.grey,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                );
+                              }
+
+                              return ListView.builder(
+                                shrinkWrap: true,
+                                padding: EdgeInsets.zero,
+                                itemCount: activities.length,
+                                itemBuilder: (context, index) {
+                                  final activity = activities[index];
+                                  return _buildActivityItem(
+                                    activity['title'] as String,
+                                    activity['subtitle'] as String,
+                                    activity['icon'] as IconData,
+                                    activity['color'] as Color,
+                                    DateTime.parse(
+                                      activity['created_at'] as String,
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        ),
+
+                        // Footer
+                        SizedBox(height: isSmallScreen ? 12 : 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('Close'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
     );
+  }
+
+  void _showProfileSettingsDialog() {
+    final currentData = SessionService.currentUserData;
+
+    final serviceNameController = TextEditingController(
+      text: currentData?['service_name']?.toString() ?? '',
+    );
+    final contactPersonController = TextEditingController(
+      text: currentData?['contact_person']?.toString() ?? '',
+    );
+    final phoneController = TextEditingController(
+      text: currentData?['phone']?.toString() ?? '',
+    );
+    final passwordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+
+    bool showPassword = false;
+    bool showConfirmPassword = false;
+    bool isUpdating = false;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => StatefulBuilder(
+            builder:
+                (context, setState) => AlertDialog(
+                  title: const Text('Profile Settings'),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Service Name
+                        TextField(
+                          controller: serviceNameController,
+                          decoration: const InputDecoration(
+                            labelText: 'Service Name',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.business),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Contact Person
+                        TextField(
+                          controller: contactPersonController,
+                          decoration: const InputDecoration(
+                            labelText: 'Contact Person',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.person),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Phone
+                        TextField(
+                          controller: phoneController,
+                          decoration: const InputDecoration(
+                            labelText: 'Phone Number',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.phone),
+                          ),
+                          keyboardType: TextInputType.phone,
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Password
+                        TextField(
+                          controller: passwordController,
+                          obscureText: !showPassword,
+                          decoration: InputDecoration(
+                            labelText: 'New Password (optional)',
+                            border: const OutlineInputBorder(),
+                            prefixIcon: const Icon(Icons.lock),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                showPassword
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  showPassword = !showPassword;
+                                });
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Confirm Password
+                        TextField(
+                          controller: confirmPasswordController,
+                          obscureText: !showConfirmPassword,
+                          decoration: InputDecoration(
+                            labelText: 'Confirm New Password',
+                            border: const OutlineInputBorder(),
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                showConfirmPassword
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  showConfirmPassword = !showConfirmPassword;
+                                });
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+
+                        // Password validation note
+                        Text(
+                          'Note: Leave password fields empty to keep current password unchanged',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed:
+                          isUpdating ? null : () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed:
+                          isUpdating
+                              ? null
+                              : () async {
+                                setState(() {
+                                  isUpdating = true;
+                                });
+
+                                try {
+                                  await _updateProfile(
+                                    serviceName:
+                                        serviceNameController.text.trim(),
+                                    contactPerson:
+                                        contactPersonController.text.trim(),
+                                    phone: phoneController.text.trim(),
+                                    newPassword: passwordController.text.trim(),
+                                    confirmPassword:
+                                        confirmPasswordController.text.trim(),
+                                  );
+                                  Navigator.pop(context);
+                                } catch (e) {
+                                  _showErrorSnackBar(
+                                    'Failed to update profile: $e',
+                                  );
+                                } finally {
+                                  setState(() {
+                                    isUpdating = false;
+                                  });
+                                }
+                              },
+                      child:
+                          isUpdating
+                              ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                              : const Text('Update Profile'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+  }
+
+  Future<void> _updateProfile({
+    required String serviceName,
+    required String contactPerson,
+    required String phone,
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    try {
+      // Validate password if provided
+      if (newPassword.isNotEmpty || confirmPassword.isNotEmpty) {
+        if (newPassword != confirmPassword) {
+          throw Exception('Passwords do not match');
+        }
+        if (newPassword.length < 6) {
+          throw Exception('Password must be at least 6 characters long');
+        }
+      }
+
+      final serviceIdStr =
+          SessionService.currentUserData?['service_id']?.toString();
+      if (serviceIdStr == null || serviceIdStr.isEmpty) {
+        throw Exception('Service account not found');
+      }
+
+      final serviceId = int.tryParse(serviceIdStr);
+      if (serviceId == null) {
+        throw Exception('Invalid service account ID');
+      }
+
+      // Prepare update data - only include non-empty fields
+      Map<String, dynamic> updateData = {};
+
+      if (serviceName.isNotEmpty) {
+        updateData['service_name'] = serviceName;
+      }
+      if (contactPerson.isNotEmpty) {
+        updateData['contact_person'] = contactPerson;
+      }
+      if (phone.isNotEmpty) {
+        updateData['phone'] = phone;
+      }
+
+      // Handle password update if provided
+      if (newPassword.isNotEmpty) {
+        // Import the encryption service for password hashing
+        updateData['password_hash'] = EncryptionService.hashPassword(
+          newPassword,
+        );
+      }
+
+      if (updateData.isEmpty) {
+        throw Exception('No changes to update');
+      }
+
+      // Update the service account
+      final result = await SupabaseService.updateServiceAccount(
+        accountId: serviceId,
+        serviceName: updateData['service_name'],
+        contactPerson: updateData['contact_person'],
+        phone: updateData['phone'],
+      );
+
+      if (result['success'] != true) {
+        throw Exception(result['message'] ?? 'Failed to update profile');
+      }
+
+      // Update local session data
+      if (serviceName.isNotEmpty) {
+        SessionService.currentUserData?['service_name'] = serviceName;
+      }
+      if (contactPerson.isNotEmpty) {
+        SessionService.currentUserData?['contact_person'] = contactPerson;
+      }
+      if (phone.isNotEmpty) {
+        SessionService.currentUserData?['phone'] = phone;
+      }
+
+      // Refresh the UI
+      setState(() {});
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profile updated successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      print('DEBUG HomeTab: Profile update error: $e');
+      rethrow;
+    }
   }
 }

@@ -14,9 +14,12 @@ class ServiceReportsTab extends StatefulWidget {
 
 class _ServiceReportsTabState extends State<ServiceReportsTab> {
   static const Color evsuRed = Color(0xFFB91C1C);
-  // On-screen view is always Today
+
+  // Period selection
+  String _selectedPeriod = 'Today';
   DateTimeRange? _dateRange;
-  // loading flag removed; overview loads immediately on period tap
+
+  // Data
   List<Map<String, dynamic>> _transactions = [];
   double _totalAmount = 0.0;
   int _totalCount = 0;
@@ -27,8 +30,8 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
   @override
   void initState() {
     super.initState();
-    // Default to today's range for "Daily". Data loads when user taps Generate.
-    _applyQuickRange('Daily');
+    // Default to today's range
+    _applyPeriodRange('Today');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadTransactions();
     });
@@ -124,8 +127,83 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
 
             SizedBox(height: isWeb ? 30 : 24),
 
-            // Period Selector removed for on-screen view; always shows today's data
-            SizedBox(height: isWeb ? 30 : 24),
+            // Period Selector
+            Container(
+              padding: EdgeInsets.all(isWeb ? 20 : 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(isWeb ? 16 : 12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Period Overview',
+                    style: TextStyle(
+                      fontSize: isWeb ? 18 : 16,
+                      fontWeight: FontWeight.bold,
+                      color: evsuRed,
+                    ),
+                  ),
+                  SizedBox(height: isWeb ? 16 : 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children:
+                        ['Today', 'Week', 'Month', 'Year'].map((period) {
+                          final isSelected = _selectedPeriod == period;
+                          return GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedPeriod = period;
+                                _applyPeriodRange(period);
+                              });
+                              _loadTransactions();
+                            },
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: isWeb ? 16 : 12,
+                                vertical: isWeb ? 10 : 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isSelected ? evsuRed : Colors.grey[100],
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color:
+                                      isSelected ? evsuRed : Colors.grey[300]!,
+                                  width: 1,
+                                ),
+                              ),
+                              child: Text(
+                                period,
+                                style: TextStyle(
+                                  color:
+                                      isSelected
+                                          ? Colors.white
+                                          : Colors.grey[700],
+                                  fontSize: isWeb ? 14 : 13,
+                                  fontWeight:
+                                      isSelected
+                                          ? FontWeight.w600
+                                          : FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                  ),
+                ],
+              ),
+            ),
+
+            SizedBox(height: isWeb ? 24 : 20),
 
             // Key Metrics (from fetched data)
             Container(
@@ -145,7 +223,7 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Today Overview',
+                    '$_selectedPeriod Overview',
                     style: TextStyle(
                       fontSize: isWeb ? 22 : (isTablet ? 20 : 18),
                       fontWeight: FontWeight.bold,
@@ -265,7 +343,7 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Item Breakdown (Selected Range)',
+                    'Item Breakdown ($_selectedPeriod)',
                     style: TextStyle(
                       fontSize: isWeb ? 20 : (isTablet ? 18 : 16),
                       fontWeight: FontWeight.bold,
@@ -369,10 +447,14 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
                         final t = _transactions[index];
+                        final createdAtStr = t['created_at']?.toString() ?? '';
+                        final localDateTime = _formatDateTimeForDisplay(
+                          createdAtStr,
+                        );
                         return ListTile(
                           dense: true,
                           title: Text(
-                            '${t['created_at'] ?? ''}  •  ₱${(t['total_amount'] as num).toDouble().toStringAsFixed(2)}',
+                            '$localDateTime  •  ₱${(t['total_amount'] as num).toDouble().toStringAsFixed(2)}',
                           ),
                           subtitle: Text(
                             'Items: ' + (t['items'] as List).length.toString(),
@@ -395,11 +477,33 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
 
   // Removed unused export/email helpers
 
-  void _applyQuickRange(String period) {
-    // Keep internal range set to today for consistency
+  void _applyPeriodRange(String period) {
     final now = DateTime.now();
-    final start = DateTime(now.year, now.month, now.day);
-    final end = now;
+    DateTime start;
+    DateTime end = now;
+
+    switch (period) {
+      case 'Today':
+        start = DateTime(now.year, now.month, now.day);
+        break;
+      case 'Week':
+        // Start of current week (Monday)
+        final weekday = now.weekday;
+        start = now.subtract(Duration(days: weekday - 1));
+        start = DateTime(start.year, start.month, start.day);
+        break;
+      case 'Month':
+        // Start of current month
+        start = DateTime(now.year, now.month, 1);
+        break;
+      case 'Year':
+        // Start of current year
+        start = DateTime(now.year, 1, 1);
+        break;
+      default:
+        start = DateTime(now.year, now.month, now.day);
+    }
+
     _dateRange = DateTimeRange(start: start, end: end);
   }
 
@@ -408,12 +512,20 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
   Future<void> _loadTransactions() async {
     // start fetch
     try {
-      // DEBUG: session and range
-      final nowDbg = DateTime.now();
-      // Always today for on-screen view
-      final now = DateTime.now();
-      final localStart = DateTime(now.year, now.month, now.day);
-      final localEnd = localStart.add(const Duration(days: 1));
+      // Use the selected date range
+      final range = _dateRange;
+      if (range == null) return;
+
+      final localStart = DateTime(
+        range.start.year,
+        range.start.month,
+        range.start.day,
+      );
+      final localEnd = DateTime(
+        range.end.year,
+        range.end.month,
+        range.end.day,
+      ).add(const Duration(days: 1));
       final from = localStart.toUtc().toIso8601String();
       final to = localEnd.toUtc().toIso8601String();
 
@@ -432,7 +544,7 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
       // DEBUG: Inputs
       // ignore: avoid_print
       print(
-        'DEBUG ReportsTab: nowLocal=$nowDbg, todayLocalStart=$localStart, todayLocalEnd=$localEnd',
+        'DEBUG ReportsTab: period=$_selectedPeriod, localStart=$localStart, localEnd=$localEnd',
       );
       print(
         'DEBUG ReportsTab: UTC range from=$from to=$to, rootMainId=$rootMainId',
@@ -527,6 +639,67 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
 
   // Removed old export (non-range) method; using _exportCsvWithRange instead
 
+  String _formatDateTimeForDisplay(String dateTimeStr) {
+    try {
+      final dateTime = DateTime.parse(dateTimeStr);
+      // Convert UTC to local time (assuming UTC+8 for Philippines)
+      final localDateTime = dateTime.add(const Duration(hours: 8));
+
+      final months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+
+      final dateStr =
+          '${months[localDateTime.month - 1]} ${localDateTime.day}, ${localDateTime.year}';
+
+      // Format time as "9:56 am"
+      final hour =
+          localDateTime.hour == 0
+              ? 12
+              : (localDateTime.hour > 12
+                  ? localDateTime.hour - 12
+                  : localDateTime.hour);
+      final minute = localDateTime.minute.toString().padLeft(2, '0');
+      final amPm = localDateTime.hour < 12 ? 'am' : 'pm';
+      final timeStr = '$hour:$minute $amPm';
+
+      return '$dateStr $timeStr';
+    } catch (e) {
+      return dateTimeStr; // Return original if parsing fails
+    }
+  }
+
+  String _formatDateTimeForCsv(String dateTimeStr) {
+    try {
+      final dateTime = DateTime.parse(dateTimeStr);
+      // Convert UTC to local time (assuming UTC+8 for Philippines)
+      final localDateTime = dateTime.add(const Duration(hours: 8));
+
+      // Format for CSV: YYYY-MM-DD HH:MM:SS
+      final year = localDateTime.year;
+      final month = localDateTime.month.toString().padLeft(2, '0');
+      final day = localDateTime.day.toString().padLeft(2, '0');
+      final hour = localDateTime.hour.toString().padLeft(2, '0');
+      final minute = localDateTime.minute.toString().padLeft(2, '0');
+      final second = localDateTime.second.toString().padLeft(2, '0');
+
+      return '$year-$month-$day $hour:$minute:$second';
+    } catch (e) {
+      return dateTimeStr; // Return original if parsing fails
+    }
+  }
+
   Future<void> _exportCsvWithRange() async {
     try {
       final now = DateTime.now();
@@ -598,6 +771,7 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
       for (final t in tx) {
         totalAmount += (t['total_amount'] as num).toDouble();
         final created = t['created_at']?.toString() ?? '';
+        final localDateTime = _formatDateTimeForCsv(created);
         final items =
             (t['items'] as List)
                 .map((e) => Map<String, dynamic>.from(e as Map))
@@ -609,7 +783,7 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
           final lineNum =
               (it['total'] as num?)?.toDouble() ?? priceNum * qtyNum;
           rows.add([
-            created,
+            localDateTime,
             name,
             qtyNum.toString(),
             priceNum.toStringAsFixed(2),

@@ -11,6 +11,7 @@ import '../services/session_service.dart';
 import '../services/supabase_service.dart';
 import '../services/esp32_bluetooth_service_account.dart';
 import '../login_page.dart';
+import '../services/encryption_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 // Removed SettingsTab per requirements (settings is a separate screen)
@@ -33,18 +34,501 @@ class SettingsScreen extends StatelessWidget {
         padding: EdgeInsets.all(horizontalPadding),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             _SettingsItem(
               title: 'Profile',
               subtitle: 'View and edit account info',
+              onTap: () => _showProfileSettingsDialog(context),
+              icon: Icons.person,
             ),
-            _SettingsItem(title: 'Notifications', subtitle: 'Manage alerts'),
-            _SettingsItem(title: 'Scanner', subtitle: 'View assigned scanner'),
-            _SettingsItem(title: 'Appearance', subtitle: 'Theme preferences'),
-            _SettingsItem(title: 'About', subtitle: 'Version and info'),
+            _SettingsItem(
+              title: 'Notifications',
+              subtitle: 'Manage alerts',
+              onTap: () => _showComingSoonDialog(context, 'Notifications'),
+              icon: Icons.notifications,
+            ),
+            _SettingsItem(
+              title: 'Scanner',
+              subtitle: 'View assigned scanner',
+              onTap: () => _showComingSoonDialog(context, 'Scanner Settings'),
+              icon: Icons.qr_code_scanner,
+            ),
+            _SettingsItem(
+              title: 'Appearance',
+              subtitle: 'Theme preferences',
+              onTap: () => _showComingSoonDialog(context, 'Appearance'),
+              icon: Icons.palette,
+            ),
+            _SettingsItem(
+              title: 'Send Feedback',
+              subtitle: 'Share your thoughts and suggestions',
+              onTap: () => _showFeedbackDialog(context),
+              icon: Icons.feedback,
+            ),
+            _SettingsItem(
+              title: 'About',
+              subtitle: 'Version and info',
+              onTap: () => _showAboutDialog(context),
+              icon: Icons.info,
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  void _showProfileSettingsDialog(BuildContext context) {
+    final currentData = SessionService.currentUserData;
+
+    final serviceNameController = TextEditingController(
+      text: currentData?['service_name']?.toString() ?? '',
+    );
+    final contactPersonController = TextEditingController(
+      text: currentData?['contact_person']?.toString() ?? '',
+    );
+    final phoneController = TextEditingController(
+      text: currentData?['phone']?.toString() ?? '',
+    );
+    final passwordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+
+    bool showPassword = false;
+    bool showConfirmPassword = false;
+    bool isUpdating = false;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => StatefulBuilder(
+            builder:
+                (context, setState) => AlertDialog(
+                  title: const Text('Profile Settings'),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Service Name
+                        TextField(
+                          controller: serviceNameController,
+                          decoration: const InputDecoration(
+                            labelText: 'Service Name',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.business),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Contact Person
+                        TextField(
+                          controller: contactPersonController,
+                          decoration: const InputDecoration(
+                            labelText: 'Contact Person',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.person),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Phone
+                        TextField(
+                          controller: phoneController,
+                          decoration: const InputDecoration(
+                            labelText: 'Phone Number',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.phone),
+                          ),
+                          keyboardType: TextInputType.phone,
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Password
+                        TextField(
+                          controller: passwordController,
+                          obscureText: !showPassword,
+                          decoration: InputDecoration(
+                            labelText: 'New Password (optional)',
+                            border: const OutlineInputBorder(),
+                            prefixIcon: const Icon(Icons.lock),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                showPassword
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  showPassword = !showPassword;
+                                });
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Confirm Password
+                        TextField(
+                          controller: confirmPasswordController,
+                          obscureText: !showConfirmPassword,
+                          decoration: InputDecoration(
+                            labelText: 'Confirm New Password',
+                            border: const OutlineInputBorder(),
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                showConfirmPassword
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  showConfirmPassword = !showConfirmPassword;
+                                });
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+
+                        // Password validation note
+                        Text(
+                          'Note: Leave password fields empty to keep current password unchanged',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed:
+                          isUpdating ? null : () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed:
+                          isUpdating
+                              ? null
+                              : () async {
+                                setState(() {
+                                  isUpdating = true;
+                                });
+
+                                try {
+                                  await _updateProfile(
+                                    context,
+                                    serviceName:
+                                        serviceNameController.text.trim(),
+                                    contactPerson:
+                                        contactPersonController.text.trim(),
+                                    phone: phoneController.text.trim(),
+                                    newPassword: passwordController.text.trim(),
+                                    confirmPassword:
+                                        confirmPasswordController.text.trim(),
+                                  );
+                                  Navigator.pop(context);
+                                } catch (e) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Failed to update profile: $e',
+                                      ),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                } finally {
+                                  setState(() {
+                                    isUpdating = false;
+                                  });
+                                }
+                              },
+                      child:
+                          isUpdating
+                              ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                              : const Text('Update Profile'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+  }
+
+  Future<void> _updateProfile(
+    BuildContext context, {
+    required String serviceName,
+    required String contactPerson,
+    required String phone,
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    try {
+      // Validate password if provided
+      if (newPassword.isNotEmpty || confirmPassword.isNotEmpty) {
+        if (newPassword != confirmPassword) {
+          throw Exception('Passwords do not match');
+        }
+        if (newPassword.length < 6) {
+          throw Exception('Password must be at least 6 characters long');
+        }
+      }
+
+      final serviceIdStr =
+          SessionService.currentUserData?['service_id']?.toString();
+      if (serviceIdStr == null || serviceIdStr.isEmpty) {
+        throw Exception('Service account not found');
+      }
+
+      final serviceId = int.tryParse(serviceIdStr);
+      if (serviceId == null) {
+        throw Exception('Invalid service account ID');
+      }
+
+      // Prepare update data - only include non-empty fields
+      Map<String, dynamic> updateData = {};
+
+      if (serviceName.isNotEmpty) {
+        updateData['service_name'] = serviceName;
+      }
+      if (contactPerson.isNotEmpty) {
+        updateData['contact_person'] = contactPerson;
+      }
+      if (phone.isNotEmpty) {
+        updateData['phone'] = phone;
+      }
+
+      // Handle password update if provided
+      if (newPassword.isNotEmpty) {
+        updateData['password_hash'] = EncryptionService.hashPassword(
+          newPassword,
+        );
+      }
+
+      if (updateData.isEmpty) {
+        throw Exception('No changes to update');
+      }
+
+      // Update the service account
+      final result = await SupabaseService.updateServiceAccount(
+        accountId: serviceId,
+        serviceName: updateData['service_name'],
+        contactPerson: updateData['contact_person'],
+        phone: updateData['phone'],
+      );
+
+      if (result['success'] != true) {
+        throw Exception(result['message'] ?? 'Failed to update profile');
+      }
+
+      // Update local session data
+      if (serviceName.isNotEmpty) {
+        SessionService.currentUserData?['service_name'] = serviceName;
+      }
+      if (contactPerson.isNotEmpty) {
+        SessionService.currentUserData?['contact_person'] = contactPerson;
+      }
+      if (phone.isNotEmpty) {
+        SessionService.currentUserData?['phone'] = phone;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profile updated successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      print('DEBUG SettingsScreen: Profile update error: $e');
+      rethrow;
+    }
+  }
+
+  void _showComingSoonDialog(BuildContext context, String feature) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: Text('$feature Settings'),
+            content: Text(
+              '$feature settings will be available in a future update.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _showFeedbackDialog(BuildContext context) {
+    final feedbackController = TextEditingController();
+    bool isSubmitting = false;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => StatefulBuilder(
+            builder:
+                (context, setState) => AlertDialog(
+                  title: const Text('Send Feedback'),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'We value your feedback! Please share your thoughts, suggestions, or report any issues you\'ve encountered.',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: feedbackController,
+                          maxLines: 4,
+                          decoration: const InputDecoration(
+                            labelText: 'Your feedback',
+                            hintText: 'Tell us what you think...',
+                            border: OutlineInputBorder(),
+                            alignLabelWithHint: true,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Your feedback will help us improve the system.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed:
+                          isSubmitting ? null : () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed:
+                          isSubmitting
+                              ? null
+                              : () async {
+                                final message = feedbackController.text.trim();
+                                if (message.isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Please enter your feedback',
+                                      ),
+                                      backgroundColor: Colors.orange,
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                setState(() {
+                                  isSubmitting = true;
+                                });
+
+                                try {
+                                  final username =
+                                      SessionService
+                                          .currentUserData?['username']
+                                          ?.toString();
+                                  if (username == null || username.isEmpty) {
+                                    throw Exception('User not found');
+                                  }
+
+                                  final result =
+                                      await SupabaseService.submitFeedback(
+                                        userType: 'service_account',
+                                        accountUsername: username,
+                                        message: message,
+                                      );
+
+                                  if (result['success'] == true) {
+                                    Navigator.pop(context);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Thank you! Your feedback has been submitted successfully.',
+                                        ),
+                                        backgroundColor: Colors.green,
+                                      ),
+                                    );
+                                  } else {
+                                    throw Exception(
+                                      result['message'] ??
+                                          'Failed to submit feedback',
+                                    );
+                                  }
+                                } catch (e) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Failed to submit feedback: $e',
+                                      ),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                } finally {
+                                  setState(() {
+                                    isSubmitting = false;
+                                  });
+                                }
+                              },
+                      child:
+                          isSubmitting
+                              ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                              : const Text('Send Feedback'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+  }
+
+  void _showAboutDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('About eCampusPay'),
+            content: const Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Version: 1.0.0'),
+                SizedBox(height: 8),
+                Text(
+                  'eCampusPay is a comprehensive campus payment system for EVSU.',
+                ),
+                SizedBox(height: 8),
+                Text('© 2024 Eastern Visayas State University'),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
     );
   }
 }
@@ -52,7 +536,16 @@ class SettingsScreen extends StatelessWidget {
 class _SettingsItem extends StatelessWidget {
   final String title;
   final String subtitle;
-  const _SettingsItem({required this.title, required this.subtitle});
+  final VoidCallback? onTap;
+  final IconData? icon;
+
+  const _SettingsItem({
+    required this.title,
+    required this.subtitle,
+    this.onTap,
+    this.icon,
+  });
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -70,10 +563,12 @@ class _SettingsItem extends StatelessWidget {
         ],
       ),
       child: ListTile(
+        leading:
+            icon != null ? Icon(icon, color: const Color(0xFFB91C1C)) : null,
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(subtitle),
         trailing: const Icon(Icons.chevron_right),
-        onTap: () {},
+        onTap: onTap,
       ),
     );
   }

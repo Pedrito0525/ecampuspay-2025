@@ -7,6 +7,7 @@ import 'user_management_tab.dart';
 import 'vendors_tab.dart';
 import 'settings_tab.dart';
 import 'loaning_tab.dart';
+import 'feedback_tab.dart';
 import '../login_page.dart';
 
 class AdminDashboard extends StatefulWidget {
@@ -83,6 +84,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
       label: 'Loaning',
       id: 'loaning',
     ),
+    NavigationItem(
+      icon: Icons.feedback_outlined,
+      activeIcon: Icons.feedback,
+      label: 'Feedback',
+      id: 'feedback',
+      badge: 0,
+    ),
   ];
 
   @override
@@ -105,6 +113,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         navigateToServiceRegistration: widget.navigateToServiceRegistration,
       ), // 6 - Service Ports (Management)
       const LoaningTab(), // 7 - Loaning (Management)
+      const FeedbackTab(), // 8 - Feedback (Management)
     ];
   }
 

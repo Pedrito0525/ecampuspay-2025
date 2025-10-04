@@ -5099,7 +5099,7 @@ class _ProfileTab extends StatelessWidget {
                 icon: Icons.feedback_outlined,
                 title: 'Send Feedback',
                 subtitle: 'Share your experience',
-                onTap: () => _showComingSoon(context),
+                onTap: () => _showFeedbackDialog(context),
               ),
               _MenuItem(
                 icon: Icons.info_outline,
@@ -5225,6 +5225,138 @@ class _ProfileTab extends StatelessWidget {
         color: Colors.grey,
       ),
       onTap: item.onTap,
+    );
+  }
+
+  void _showFeedbackDialog(BuildContext context) {
+    final feedbackController = TextEditingController();
+    bool isSubmitting = false;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => StatefulBuilder(
+            builder:
+                (context, setState) => AlertDialog(
+                  title: const Text('Send Feedback'),
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'We value your feedback! Please share your thoughts, suggestions, or report any issues you\'ve encountered.',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: feedbackController,
+                          maxLines: 4,
+                          decoration: const InputDecoration(
+                            labelText: 'Your feedback',
+                            hintText: 'Tell us what you think...',
+                            border: OutlineInputBorder(),
+                            alignLabelWithHint: true,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Your feedback will help us improve the system.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed:
+                          isSubmitting ? null : () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed:
+                          isSubmitting
+                              ? null
+                              : () async {
+                                final message = feedbackController.text.trim();
+                                if (message.isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Please enter your feedback',
+                                      ),
+                                      backgroundColor: Colors.orange,
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                setState(() {
+                                  isSubmitting = true;
+                                });
+
+                                try {
+                                  final studentId =
+                                      SessionService.currentUserStudentId;
+                                  if (studentId.isEmpty) {
+                                    throw Exception('Student ID not found');
+                                  }
+
+                                  final result =
+                                      await SupabaseService.submitFeedback(
+                                        userType: 'user',
+                                        accountUsername: studentId,
+                                        message: message,
+                                      );
+
+                                  if (result['success'] == true) {
+                                    Navigator.pop(context);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Thank you! Your feedback has been submitted successfully.',
+                                        ),
+                                        backgroundColor: Colors.green,
+                                      ),
+                                    );
+                                  } else {
+                                    throw Exception(
+                                      result['message'] ??
+                                          'Failed to submit feedback',
+                                    );
+                                  }
+                                } catch (e) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Failed to submit feedback: $e',
+                                      ),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                } finally {
+                                  setState(() {
+                                    isSubmitting = false;
+                                  });
+                                }
+                              },
+                      child:
+                          isSubmitting
+                              ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                              : const Text('Send Feedback'),
+                    ),
+                  ],
+                ),
+          ),
     );
   }
 

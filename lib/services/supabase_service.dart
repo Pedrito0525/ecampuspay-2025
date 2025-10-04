@@ -35,7 +35,7 @@ class SupabaseService {
   /// Get system update settings (single-row table). If missing, returns safe defaults.
   static Future<Map<String, dynamic>> getSystemUpdateSettings() async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
       final response =
           await client
               .from('system_update_settings')
@@ -86,7 +86,7 @@ class SupabaseService {
     String? updatedBy,
   }) async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
       final payload = {
         'id': 1,
         'maintenance_mode': maintenanceMode,
@@ -890,7 +890,7 @@ for all to authenticated using (true) with check (true);
   /// Get total balance overview for students and service accounts
   static Future<Map<String, dynamic>> getBalanceOverview() async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       // Get total student balances from auth_students table
       final studentsResponse = await adminClient
@@ -946,7 +946,7 @@ for all to authenticated using (true) with check (true);
   /// Get detailed balance breakdown by service accounts
   static Future<Map<String, dynamic>> getServiceBalanceBreakdown() async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       final servicesResponse = await adminClient
           .from('service_accounts')
@@ -991,7 +991,7 @@ for all to authenticated using (true) with check (true);
     DateTime? end,
   }) async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       // Build date filter
       final Map<String, dynamic> filter = {};
@@ -1069,7 +1069,7 @@ for all to authenticated using (true) with check (true);
     DateTime? end,
   }) async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       // Build date filter
       final Map<String, dynamic> filter = {};
@@ -1144,7 +1144,7 @@ for all to authenticated using (true) with check (true);
     DateTime? end,
   }) async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       print("DEBUG: Starting top vendors analysis");
       print("DEBUG: Date range - start: $start, end: $end");
@@ -1238,7 +1238,7 @@ for all to authenticated using (true) with check (true);
     DateTime? end,
   }) async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       print("DEBUG: Starting vendor transaction count analysis");
       print("DEBUG: Date range - start: $start, end: $end");
@@ -1344,10 +1344,10 @@ for all to authenticated using (true) with check (true);
   /// Get API configuration settings
   static Future<Map<String, dynamic>> getApiConfiguration() async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       print("DEBUG: Fetching API configuration");
-      final response = await client
+      final response = await SupabaseService.client
           .from('api_configuration')
           .select('*')
           .limit(1);
@@ -1390,7 +1390,7 @@ for all to authenticated using (true) with check (true);
     required String webhookUrl,
   }) async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       print("DEBUG: Saving API configuration");
       print(
@@ -1450,10 +1450,10 @@ for all to authenticated using (true) with check (true);
   /// Check if Paytaca is enabled (for students - only reads enabled field)
   static Future<bool> isPaytacaEnabled() async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       // For students, only read the enabled field to avoid RLS issues
-      final response = await client
+      final response = await SupabaseService.client
           .from('api_configuration')
           .select('enabled')
           .limit(1);
@@ -1479,7 +1479,7 @@ for all to authenticated using (true) with check (true);
     int limit = 50,
   }) async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       print("DEBUG: Fetching service transactions");
       print("DEBUG: Date range - start: $start, end: $end, limit: $limit");
@@ -1558,7 +1558,7 @@ for all to authenticated using (true) with check (true);
   /// Get today's transaction statistics
   static Future<Map<String, dynamic>> getTodayTransactionStats() async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       final now = DateTime.now();
       final startOfDay = DateTime(now.year, now.month, now.day);
@@ -2734,7 +2734,7 @@ for all to authenticated using (true) with check (true);
     DateTime? end,
   }) async {
     try {
-      await initialize();
+      await SupabaseService.initialize();
 
       // Build date filters
       final Map<String, dynamic> topupFilter = {};
@@ -2827,6 +2827,124 @@ for all to authenticated using (true) with check (true);
 
   static double _roundToTwoDecimals(double value) {
     return (value * 100).roundToDouble() / 100.0;
+  }
+
+  // Feedback System Methods
+
+  /// Submit feedback from service account or user
+  static Future<Map<String, dynamic>> submitFeedback({
+    required String userType, // 'user' or 'service_account'
+    required String accountUsername,
+    required String message,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      // Validate inputs
+      if (userType != 'user' && userType != 'service_account') {
+        return {
+          'success': false,
+          'message': 'Invalid user type. Must be "user" or "service_account"',
+        };
+      }
+
+      if (message.trim().isEmpty) {
+        return {
+          'success': false,
+          'message': 'Feedback message cannot be empty',
+        };
+      }
+
+      if (accountUsername.trim().isEmpty) {
+        return {
+          'success': false,
+          'message': 'Account username cannot be empty',
+        };
+      }
+
+      // Insert feedback
+      final response =
+          await SupabaseService.client
+              .from('feedback')
+              .insert({
+                'user_type': userType,
+                'account_username': accountUsername.trim(),
+                'message': message.trim(),
+              })
+              .select()
+              .single();
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'Feedback submitted successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to submit feedback: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get feedback for service accounts (can view all feedback)
+  static Future<Map<String, dynamic>> getFeedbackForServiceAccount({
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await SupabaseService.client
+          .from('feedback')
+          .select('id, user_type, account_username, message, created_at')
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'Feedback loaded successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to load feedback: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get feedback for users (can only view their own feedback)
+  static Future<Map<String, dynamic>> getFeedbackForUser({
+    required String username,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await SupabaseService.client
+          .from('feedback')
+          .select('id, user_type, account_username, message, created_at')
+          .eq('user_type', 'user')
+          .eq('account_username', username)
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'User feedback loaded successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to load user feedback: ${e.toString()}',
+      };
+    }
   }
 }
 
@@ -3242,6 +3360,129 @@ extension LoaningApis on SupabaseService {
         'success': false,
         'error': e.toString(),
         'message': 'Failed to load loans: ${e.toString()}',
+      };
+    }
+  }
+
+  // Feedback System Methods
+
+  /// Test method to verify class structure
+  static Future<bool> testMethod() async {
+    return true;
+  }
+
+  /// Submit feedback from service account or user
+  static Future<Map<String, dynamic>> submitFeedback({
+    required String userType, // 'user' or 'service_account'
+    required String accountUsername,
+    required String message,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      // Validate inputs
+      if (userType != 'user' && userType != 'service_account') {
+        return {
+          'success': false,
+          'message': 'Invalid user type. Must be "user" or "service_account"',
+        };
+      }
+
+      if (message.trim().isEmpty) {
+        return {
+          'success': false,
+          'message': 'Feedback message cannot be empty',
+        };
+      }
+
+      if (accountUsername.trim().isEmpty) {
+        return {
+          'success': false,
+          'message': 'Account username cannot be empty',
+        };
+      }
+
+      // Insert feedback
+      final response =
+          await SupabaseService.client
+              .from('feedback')
+              .insert({
+                'user_type': userType,
+                'account_username': accountUsername.trim(),
+                'message': message.trim(),
+              })
+              .select()
+              .single();
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'Feedback submitted successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to submit feedback: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get feedback for service accounts (can view all feedback)
+  static Future<Map<String, dynamic>> getFeedbackForServiceAccount({
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await SupabaseService.client
+          .from('feedback')
+          .select('id, user_type, account_username, message, created_at')
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'Feedback loaded successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to load feedback: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get feedback for users (can only view their own feedback)
+  static Future<Map<String, dynamic>> getFeedbackForUser({
+    required String username,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await SupabaseService.client
+          .from('feedback')
+          .select('id, user_type, account_username, message, created_at')
+          .eq('user_type', 'user')
+          .eq('account_username', username)
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'User feedback loaded successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to load user feedback: ${e.toString()}',
       };
     }
   }
