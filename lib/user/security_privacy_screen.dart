@@ -84,36 +84,6 @@ class _SecurityPrivacyScreenState extends State<SecurityPrivacyScreen> {
               ),
             ]),
 
-            const SizedBox(height: 24),
-
-            // Privacy Settings Section
-            _buildSecuritySection('Privacy Settings', [
-              _SecurityItem(
-                icon: Icons.visibility_off,
-                title: 'Privacy Settings',
-                subtitle: 'Control who can see your activity',
-                onTap: () => _showPrivacySettings(),
-              ),
-            ]),
-
-            const SizedBox(height: 24),
-
-            // Emergency Section
-            _buildSecuritySection('Emergency', [
-              _SecurityItem(
-                icon: Icons.block,
-                title: 'Freeze Account',
-                subtitle: 'Temporarily disable all transactions',
-                onTap: () => _showFreezeAccountDialog(),
-              ),
-              _SecurityItem(
-                icon: Icons.report_problem,
-                title: 'Report Suspicious Activity',
-                subtitle: 'Report unauthorized transactions',
-                onTap: () => _showReportDialog(),
-              ),
-            ]),
-
             const SizedBox(height: 32),
           ],
         ),
@@ -860,79 +830,6 @@ class _SecurityPrivacyScreenState extends State<SecurityPrivacyScreen> {
         backgroundColor: Colors.green,
         duration: const Duration(seconds: 3),
       ),
-    );
-  }
-
-  void _showPrivacySettings() {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Privacy Settings'),
-            content: const Text(
-              'Privacy controls:\n\n• Transaction history visibility\n• Profile information sharing\n• Activity status',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-    );
-  }
-
-  void _showFreezeAccountDialog() {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Freeze Account'),
-            content: const Text(
-              'This will temporarily disable all transactions on your account. You can unfreeze it anytime.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                child: const Text(
-                  'Freeze',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-            ],
-          ),
-    );
-  }
-
-  void _showReportDialog() {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Report Suspicious Activity'),
-            content: const Text(
-              'Please describe the suspicious activity and we will investigate immediately.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
-                child: const Text(
-                  'Report',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-            ],
-          ),
     );
   }
 }

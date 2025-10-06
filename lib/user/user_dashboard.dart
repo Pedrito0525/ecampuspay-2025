@@ -783,7 +783,14 @@ class _HomeTabState extends State<_HomeTab> {
                     ),
                     const SizedBox(width: 10),
                     GestureDetector(
-                      onTap: () => _showTapToPayDialog(),
+                      onTap:
+                          () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder:
+                                  (context) => const SecurityPrivacyScreen(),
+                            ),
+                          ),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
@@ -2000,57 +2007,6 @@ class _HomeTabState extends State<_HomeTab> {
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                 ),
-              ),
-            ],
-          ),
-    );
-  }
-
-  void _showTapToPayDialog() {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Tap to Pay'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.tap_and_play, size: 64, color: evsuRed),
-                const SizedBox(height: 16),
-                const Text(
-                  'Hold your phone near the RFID reader to make a quick payment.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 16),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Text(
-                    'Make sure NFC is enabled and your phone is unlocked.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _showErrorSnackBar('Tap to Pay feature coming soon!');
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: evsuRed,
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text('Enable NFC'),
               ),
             ],
           ),
@@ -4928,10 +4884,77 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-class _ProfileTab extends StatelessWidget {
+class _ProfileTab extends StatefulWidget {
   const _ProfileTab();
 
+  @override
+  State<_ProfileTab> createState() => _ProfileTabState();
+}
+
+class _ProfileTabState extends State<_ProfileTab> {
   static const Color evsuRed = Color(0xFFB91C1C);
+
+  double totalSpent = 0.0;
+  double thisMonthSpent = 0.0;
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSpendingData();
+  }
+
+  Future<void> _loadSpendingData() async {
+    try {
+      final studentId = SessionService.currentUserStudentId;
+      if (studentId.isEmpty) return;
+
+      // Get current month start date
+      final now = DateTime.now();
+      final currentMonthStart = DateTime(now.year, now.month, 1);
+
+      // Fetch all service transactions for total spent
+      final allTransactions = await SupabaseService.client
+          .from('service_transactions')
+          .select('total_amount, created_at')
+          .eq('student_id', studentId);
+
+      // Fetch this month's transactions
+      final thisMonthTransactions = await SupabaseService.client
+          .from('service_transactions')
+          .select('total_amount, created_at')
+          .eq('student_id', studentId)
+          .gte('created_at', currentMonthStart.toIso8601String());
+
+      // Calculate totals
+      double total = 0.0;
+      for (final transaction in allTransactions) {
+        final amount = (transaction['total_amount'] as num?)?.toDouble() ?? 0.0;
+        total += amount;
+      }
+
+      double monthTotal = 0.0;
+      for (final transaction in thisMonthTransactions) {
+        final amount = (transaction['total_amount'] as num?)?.toDouble() ?? 0.0;
+        monthTotal += amount;
+      }
+
+      if (mounted) {
+        setState(() {
+          totalSpent = total;
+          thisMonthSpent = monthTotal;
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading spending data: $e');
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -5016,7 +5039,10 @@ class _ProfileTab extends StatelessWidget {
                 Expanded(
                   child: _buildStatCard(
                     title: 'Total Spent',
-                    value: '₱2,450',
+                    value:
+                        isLoading
+                            ? 'Loading...'
+                            : '₱${totalSpent.toStringAsFixed(2)}',
                     icon: Icons.trending_down,
                     color: Colors.red,
                   ),
@@ -5025,7 +5051,10 @@ class _ProfileTab extends StatelessWidget {
                 Expanded(
                   child: _buildStatCard(
                     title: 'This Month',
-                    value: '₱890',
+                    value:
+                        isLoading
+                            ? 'Loading...'
+                            : '₱${thisMonthSpent.toStringAsFixed(2)}',
                     icon: Icons.calendar_month,
                     color: Colors.blue,
                   ),
@@ -5055,12 +5084,6 @@ class _ProfileTab extends StatelessWidget {
                       ),
                     ),
               ),
-              _MenuItem(
-                icon: Icons.credit_card,
-                title: 'Payment Methods',
-                subtitle: 'Manage linked accounts',
-                onTap: () => _showComingSoon(context),
-              ),
             ]),
 
             const SizedBox(height: 20),
@@ -5070,18 +5093,6 @@ class _ProfileTab extends StatelessWidget {
                 icon: Icons.notifications_outlined,
                 title: 'Notifications',
                 subtitle: 'Configure alert preferences',
-                onTap: () => _showComingSoon(context),
-              ),
-              _MenuItem(
-                icon: Icons.language,
-                title: 'Language',
-                subtitle: 'English',
-                onTap: () => _showComingSoon(context),
-              ),
-              _MenuItem(
-                icon: Icons.dark_mode_outlined,
-                title: 'Theme',
-                subtitle: 'Light mode',
                 onTap: () => _showComingSoon(context),
               ),
             ]),
