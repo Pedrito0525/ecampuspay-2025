@@ -48,6 +48,7 @@ dependencies:
   pointycastle: ^3.7.3
   url_launcher: ^6.3.0
   connectivity_plus: ^6.0.5
+  flutter_dotenv: ^6.0.0
 
 dev_dependencies:
   flutter_test:
@@ -79,6 +80,7 @@ flutter:
     - assets/iconblack.png
     - assets/
     - assets/ecampuspaylogo3v.png
+    - .env
 
 flutter_native_splash:
   color: "#000000"

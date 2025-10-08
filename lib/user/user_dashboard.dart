@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-// removed unused: import 'dart:convert';
+import 'dart:convert';
 // removed unused: import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'security_privacy_screen.dart';
@@ -23,8 +23,8 @@ class _UserDashboardState extends State<UserDashboard> {
   static const Color evsuRed = Color(0xFFB91C1C);
   int _currentIndex = 0;
 
-  final List<Widget> _tabs = [
-    const _HomeTab(),
+  List<Widget> get _tabs => [
+    _HomeTab(onNavigateToTransactions: () => setState(() => _currentIndex = 2)),
     const _InboxTab(),
     const _TransactionsTab(),
     const _ProfileTab(),
@@ -137,7 +137,9 @@ class _UserDashboardState extends State<UserDashboard> {
 }
 
 class _HomeTab extends StatefulWidget {
-  const _HomeTab();
+  final VoidCallback? onNavigateToTransactions;
+
+  const _HomeTab({this.onNavigateToTransactions});
 
   @override
   State<_HomeTab> createState() => _HomeTabState();
@@ -2345,20 +2347,8 @@ class _HomeTabState extends State<_HomeTab> {
   }
 
   void _showAllTransactions() {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Transaction History'),
-            content: const Text('Loading complete transaction history...'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-    );
+    // Navigate to transactions tab
+    widget.onNavigateToTransactions?.call();
   }
 
   void _showAllLoans() {
@@ -2436,6 +2426,26 @@ class _InboxTabState extends State<_InboxTab> {
       final notifications = await NotificationService.getUserNotifications(
         studentId,
       );
+
+      // Filter notifications to show: Top-up Successful, Service Payment, Loan Payment, Transfers, Active Loan, Loan Disbursement
+      final List<Map<String, dynamic>> filteredNotifications =
+          notifications
+              .where((n) {
+                try {
+                  final type = (n['type']?.toString() ?? '').toLowerCase();
+                  // Keep: topup_success, service_payment, loan_payment, transfer_sent, transfer_received, active_loan, loan_disbursement
+                  return type == 'topup_success' ||
+                      type == 'service_payment' ||
+                      type == 'loan_payment' ||
+                      type == 'transfer_sent' ||
+                      type == 'transfer_received' ||
+                      type == 'active_loan' ||
+                      type == 'loan_disbursement';
+                } catch (_) {}
+                return false;
+              })
+              .map<Map<String, dynamic>>((n) => Map<String, dynamic>.from(n))
+              .toList();
 
       // Get loan disbursements from top_up_transactions
       List<Map<String, dynamic>> loanDisbursements = [];
@@ -2531,7 +2541,7 @@ class _InboxTabState extends State<_InboxTab> {
 
       // Convert loan data to notification-like format
       final List<Map<String, dynamic>> allNotifications = List.from(
-        notifications,
+        filteredNotifications,
       );
 
       // Add loan disbursements as notifications
@@ -2735,16 +2745,13 @@ class _InboxTabState extends State<_InboxTab> {
       filtered =
           _notifications.where((n) {
             final type = n['type']?.toString() ?? '';
-            return type == 'transaction_success' ||
-                type == 'payment_success' ||
+            return type == 'topup_success' ||
+                type == 'service_payment' ||
+                type == 'loan_payment' ||
                 type == 'transfer_sent' ||
                 type == 'transfer_received' ||
-                type == 'service_payment' ||
-                type == 'topup_success' ||
-                type == 'top_up' ||
-                type.contains('transaction') ||
-                type.contains('payment') ||
-                type.contains('transfer');
+                type == 'active_loan' ||
+                type == 'loan_disbursement';
           }).toList();
     } else {
       filtered = _notifications;
@@ -2782,7 +2789,6 @@ class _InboxTabState extends State<_InboxTab> {
     final type = notification['type']?.toString() ?? '';
     switch (type) {
       case 'transaction_success':
-      case 'payment_success':
       case 'topup_success':
       case 'top_up':
         return Colors.green;
@@ -2819,8 +2825,6 @@ class _InboxTabState extends State<_InboxTab> {
       case 'topup_success':
       case 'top_up':
         return Icons.check_circle;
-      case 'payment_success':
-        return Icons.payment;
       case 'transfer_sent':
         return Icons.send;
       case 'transfer_received':
@@ -3202,8 +3206,8 @@ class _InboxTabState extends State<_InboxTab> {
               ),
               child: Container(
                 constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.9,
-                  maxHeight: MediaQuery.of(context).size.height * 0.8,
+                  maxWidth: MediaQuery.of(context).size.width * 0.98,
+                  maxHeight: MediaQuery.of(context).size.height * 0.9,
                 ),
                 child: SingleChildScrollView(
                   child: Column(
@@ -3407,28 +3411,6 @@ class _InboxTabState extends State<_InboxTab> {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: ElevatedButton(
-                                onPressed: () {
-                                  Navigator.pop(context);
-                                  // Add share functionality here if needed
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: evsuRed,
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 12,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                child: const Text(
-                                  'Share',
-                                  style: TextStyle(color: Colors.white),
-                                ),
-                              ),
-                            ),
                           ],
                         ),
                       ),
@@ -3577,6 +3559,8 @@ class _InboxTabState extends State<_InboxTab> {
       case 'loan_payment':
       case 'service_payment':
       case 'transfer':
+      case 'transfer_sent':
+      case 'transfer_received':
         return 'Completed';
       case 'active_loan':
         return 'Active';
@@ -3592,6 +3576,8 @@ class _InboxTabState extends State<_InboxTab> {
       case 'loan_payment':
       case 'service_payment':
       case 'transfer':
+      case 'transfer_sent':
+      case 'transfer_received':
         return Colors.green[700]!;
       case 'active_loan':
         return Colors.blue[700]!;
@@ -3716,6 +3702,86 @@ class _InboxTabState extends State<_InboxTab> {
             '₱${_safeParseNumber(data['total_amount']).toStringAsFixed(2)}',
           ),
         );
+        // Display purchased items from service_transactions.items
+        final dynamic rawItems = data['items'];
+        List<dynamic> itemsList = [];
+        if (rawItems is String) {
+          try {
+            final decoded = jsonDecode(rawItems);
+            if (decoded is List) itemsList = decoded;
+          } catch (_) {}
+        } else if (rawItems is List) {
+          itemsList = rawItems;
+        }
+        if (itemsList.isNotEmpty) {
+          details.add(const SizedBox(height: 12));
+          details.add(_buildReceiptRow('Items', '${itemsList.length} item(s)'));
+          for (final item in itemsList) {
+            try {
+              final map = (item is Map) ? Map<String, dynamic>.from(item) : {};
+              final String name =
+                  (map['name'] ?? map['item_name'] ?? 'Item').toString();
+              final double qty = _safeParseNumber(
+                map['quantity'] ?? map['qty'],
+              );
+              final double price = _safeParseNumber(
+                map['price'] ?? map['unit_price'] ?? map['amount'],
+              );
+              final double lineTotal =
+                  map.containsKey('total')
+                      ? _safeParseNumber(map['total'])
+                      : (qty > 0 && price > 0 ? qty * price : price);
+              details.add(
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: Text(
+                          name,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          softWrap: true,
+                          overflow: TextOverflow.visible,
+                        ),
+                      ),
+                      Expanded(
+                        flex: 3,
+                        child: Text(
+                          qty > 0
+                              ? 'x${qty.toStringAsFixed(qty == qty.roundToDouble() ? 0 : 2)}  •  ₱${lineTotal.toStringAsFixed(2)}'
+                              : '₱${lineTotal.toStringAsFixed(2)}',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Colors.black87,
+                          ),
+                          softWrap: true,
+                          overflow: TextOverflow.visible,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            } catch (_) {
+              // Fallback: show raw item string
+              details.add(
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    item.toString(),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              );
+            }
+          }
+        }
         break;
 
       case 'transfer':
@@ -3863,7 +3929,6 @@ class _InboxTabState extends State<_InboxTab> {
           break;
 
         case 'service_payment':
-        case 'payment_success':
           if (transactionId != null) {
             final result =
                 await SupabaseService.client

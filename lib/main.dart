@@ -3,9 +3,13 @@ import 'splash_page.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'services/supabase_service.dart';
 import 'services/session_service.dart';
+import 'config/supabase_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize environment variables first
+  await SupabaseConfig.initialize();
 
   // Initialize Supabase
   await SupabaseService.initialize();

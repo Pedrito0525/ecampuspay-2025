@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../services/session_service.dart';
 import '../services/supabase_service.dart';
@@ -436,6 +437,7 @@ class _HomeTabState extends State<HomeTab> {
                       activity['icon'] as IconData,
                       activity['color'] as Color,
                       DateTime.parse(activity['created_at'] as String),
+                      activityData: activity,
                     ),
                   ),
                 ],
@@ -722,56 +724,67 @@ class _HomeTabState extends State<HomeTab> {
     String subtitle,
     IconData icon,
     Color color,
-    DateTime? dateTime,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
+    DateTime? dateTime, {
+    Map<String, dynamic>? activityData,
+  }) {
+    return GestureDetector(
+      onTap:
+          activityData != null
+              ? () => _showTransactionDetailModal(activityData)
+              : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, color: color, size: 20),
             ),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 2,
-                ),
-                if (dateTime != null) ...[
-                  const SizedBox(height: 2),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    _formatDateTime(dateTime),
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    title,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
                   ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                  ),
+                  if (dateTime != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      _formatDateTime(dateTime),
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-        ],
+            if (activityData != null) ...[
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right, color: Colors.grey[400], size: 16),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -1364,6 +1377,7 @@ class _HomeTabState extends State<HomeTab> {
                                     DateTime.parse(
                                       activity['created_at'] as String,
                                     ),
+                                    activityData: activity,
                                   );
                                 },
                               );
@@ -1660,5 +1674,482 @@ class _HomeTabState extends State<HomeTab> {
       print('DEBUG HomeTab: Profile update error: $e');
       rethrow;
     }
+  }
+
+  void _showTransactionDetailModal(Map<String, dynamic> activity) async {
+    // Show loading dialog first
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      // Fetch actual transaction data based on activity type
+      final transactionData = await _fetchServiceTransactionData(activity);
+
+      // Close loading dialog
+      Navigator.of(context).pop();
+
+      // Show transaction details modal
+      showDialog(
+        context: context,
+        builder: (context) {
+          final screenSize = MediaQuery.of(context).size;
+          final isSmallScreen = screenSize.width < 600;
+
+          return Dialog(
+            insetPadding: EdgeInsets.symmetric(
+              horizontal: isSmallScreen ? 16 : 32,
+              vertical: isSmallScreen ? 16 : 32,
+            ),
+            child: Container(
+              constraints: BoxConstraints(
+                maxWidth: screenSize.width * 0.98,
+                maxHeight: screenSize.height * 0.9,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Header
+                    Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.all(isSmallScreen ? 16 : 20),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFB91C1C),
+                        borderRadius: BorderRadius.only(
+                          topLeft: Radius.circular(16),
+                          topRight: Radius.circular(16),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _getTransactionTitle(transactionData?['type']),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Transaction Details',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.9),
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Transaction Details
+                    Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Transaction ID
+                          _buildReceiptRow(
+                            'Transaction ID',
+                            '#${transactionData?['id']?.toString().padLeft(8, '0') ?? activity['id']?.toString().padLeft(8, '0') ?? 'N/A'}',
+                          ),
+
+                          // Amount
+                          if (activity['amount'] != null)
+                            _buildReceiptRow(
+                              'Amount',
+                              '₱${(activity['amount'] as num).toStringAsFixed(2)}',
+                              isAmount: true,
+                            ),
+
+                          // Date and Time
+                          _buildReceiptRow(
+                            'Date & Time',
+                            _formatDateTime(
+                              DateTime.parse(activity['created_at']),
+                            ),
+                          ),
+
+                          // Status
+                          _buildReceiptRow(
+                            'Status',
+                            _getTransactionStatus(transactionData?['type']),
+                            statusColor: _getTransactionStatusColor(
+                              transactionData?['type'],
+                            ),
+                          ),
+
+                          // Additional transaction-specific details
+                          ..._buildTransactionDetails(transactionData),
+
+                          const SizedBox(height: 20),
+
+                          // Close button
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: () => Navigator.pop(context),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFB91C1C),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              child: const Text(
+                                'Close',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      // Close loading dialog
+      Navigator.of(context).pop();
+
+      // Show error
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to load transaction details: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>?> _fetchServiceTransactionData(
+    Map<String, dynamic> activity,
+  ) async {
+    try {
+      final transactionId = activity['id'];
+      final transactionType = activity['type'];
+
+      if (transactionId == null) return null;
+
+      switch (transactionType) {
+        case 'payment':
+          {
+            // Fetch service transaction details
+            final result =
+                await SupabaseService.client
+                    .from('service_transactions')
+                    .select('*')
+                    .eq('id', transactionId)
+                    .single();
+
+            // Attempt to fetch and decrypt student name
+            try {
+              final studentId = result['student_id']?.toString();
+              if (studentId != null && studentId.isNotEmpty) {
+                final studentRow =
+                    await SupabaseService.client
+                        .from('auth_students')
+                        .select('name')
+                        .eq('student_id', studentId)
+                        .maybeSingle();
+                if (studentRow != null) {
+                  String studentName = studentRow['name']?.toString() ?? '';
+                  if (EncryptionService.looksLikeEncryptedData(studentName)) {
+                    studentName = EncryptionService.decryptData(studentName);
+                  }
+                  result['student_name'] = studentName;
+                }
+              }
+            } catch (_) {}
+
+            return {
+              'type': 'service_payment',
+              'data': result,
+              'id': transactionId,
+            };
+          }
+
+        case 'top_up':
+          {
+            // Fetch top-up transaction details
+            final result =
+                await SupabaseService.client
+                    .from('top_up_transactions')
+                    .select('*')
+                    .eq('id', transactionId)
+                    .single();
+
+            // Attempt to fetch and decrypt student name
+            try {
+              final studentId = result['student_id']?.toString();
+              if (studentId != null && studentId.isNotEmpty) {
+                final studentRow =
+                    await SupabaseService.client
+                        .from('auth_students')
+                        .select('name')
+                        .eq('student_id', studentId)
+                        .maybeSingle();
+                if (studentRow != null) {
+                  String studentName = studentRow['name']?.toString() ?? '';
+                  if (EncryptionService.looksLikeEncryptedData(studentName)) {
+                    studentName = EncryptionService.decryptData(studentName);
+                  }
+                  result['student_name'] = studentName;
+                }
+              }
+            } catch (_) {}
+
+            return {'type': 'top_up', 'data': result, 'id': transactionId};
+          }
+
+        default:
+          return null;
+      }
+    } catch (e) {
+      print('Error fetching service transaction data: $e');
+      return null;
+    }
+  }
+
+  String _getTransactionTitle(String? transactionType) {
+    switch (transactionType?.toLowerCase()) {
+      case 'top_up':
+        return 'Top-up Transaction';
+      case 'service_payment':
+        return 'Service Payment';
+      default:
+        return 'Transaction';
+    }
+  }
+
+  String _getTransactionStatus(String? transactionType) {
+    switch (transactionType?.toLowerCase()) {
+      case 'top_up':
+      case 'service_payment':
+        return 'Completed';
+      default:
+        return 'Processed';
+    }
+  }
+
+  Color _getTransactionStatusColor(String? transactionType) {
+    switch (transactionType?.toLowerCase()) {
+      case 'top_up':
+      case 'service_payment':
+        return Colors.green[700]!;
+      default:
+        return Colors.blue[700]!;
+    }
+  }
+
+  List<Widget> _buildTransactionDetails(Map<String, dynamic>? transactionData) {
+    if (transactionData == null) return [];
+
+    final data = transactionData['data'] as Map<String, dynamic>?;
+    if (data == null) return [];
+
+    final transactionType = transactionData['type'] as String?;
+    final List<Widget> details = [];
+
+    switch (transactionType?.toLowerCase()) {
+      case 'top_up':
+        details.add(
+          _buildReceiptRow(
+            'Student ID',
+            data['student_id']?.toString() ?? 'N/A',
+          ),
+        );
+        if (data['student_name'] != null &&
+            (data['student_name'] as String).isNotEmpty) {
+          details.add(
+            _buildReceiptRow('Student Name', data['student_name'] as String),
+          );
+        }
+        details.add(
+          _buildReceiptRow(
+            'Top-up Amount',
+            '₱${_safeParseNumber(data['amount']).toStringAsFixed(2)}',
+          ),
+        );
+        details.add(
+          _buildReceiptRow(
+            'New Balance',
+            '₱${_safeParseNumber(data['new_balance']).toStringAsFixed(2)}',
+          ),
+        );
+        if (data['processed_by'] != null) {
+          details.add(
+            _buildReceiptRow('Processed By', data['processed_by'].toString()),
+          );
+        }
+        break;
+
+      case 'service_payment':
+        details.add(
+          _buildReceiptRow(
+            'Student ID',
+            data['student_id']?.toString() ?? 'N/A',
+          ),
+        );
+        if (data['student_name'] != null &&
+            (data['student_name'] as String).isNotEmpty) {
+          details.add(
+            _buildReceiptRow('Student Name', data['student_name'] as String),
+          );
+        }
+        details.add(
+          _buildReceiptRow(
+            'Total Amount',
+            '₱${_safeParseNumber(data['total_amount']).toStringAsFixed(2)}',
+          ),
+        );
+
+        // Display purchased items from service_transactions.items
+        final dynamic rawItems = data['items'];
+        List<dynamic> itemsList = [];
+        if (rawItems is String) {
+          try {
+            final decoded = jsonDecode(rawItems);
+            if (decoded is List) itemsList = decoded;
+          } catch (_) {}
+        } else if (rawItems is List) {
+          itemsList = rawItems;
+        }
+
+        if (itemsList.isNotEmpty) {
+          details.add(const SizedBox(height: 12));
+          details.add(_buildReceiptRow('Items', '${itemsList.length} item(s)'));
+
+          for (final item in itemsList) {
+            try {
+              final map = (item is Map) ? Map<String, dynamic>.from(item) : {};
+              final String name =
+                  (map['name'] ?? map['item_name'] ?? 'Item').toString();
+              final double qty = _safeParseNumber(
+                map['quantity'] ?? map['qty'],
+              );
+              final double price = _safeParseNumber(
+                map['price'] ?? map['unit_price'] ?? map['amount'],
+              );
+              final double lineTotal =
+                  map.containsKey('total')
+                      ? _safeParseNumber(map['total'])
+                      : (qty > 0 && price > 0 ? qty * price : price);
+
+              details.add(
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: Text(
+                          name,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          softWrap: true,
+                          overflow: TextOverflow.visible,
+                        ),
+                      ),
+                      Expanded(
+                        flex: 3,
+                        child: Text(
+                          qty > 0
+                              ? 'x${qty.toStringAsFixed(qty == qty.roundToDouble() ? 0 : 2)}  •  ₱${lineTotal.toStringAsFixed(2)}'
+                              : '₱${lineTotal.toStringAsFixed(2)}',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Colors.black87,
+                          ),
+                          softWrap: true,
+                          overflow: TextOverflow.visible,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            } catch (_) {
+              // Fallback: show raw item string
+              details.add(
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    item.toString(),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              );
+            }
+          }
+        }
+        break;
+    }
+
+    return details;
+  }
+
+  Widget _buildReceiptRow(
+    String label,
+    String value, {
+    bool isHeader = false,
+    bool isAmount = false,
+    Color? statusColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 2,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: isHeader ? 16 : 14,
+                fontWeight: isHeader ? FontWeight.bold : FontWeight.w500,
+                color: isHeader ? const Color(0xFFB91C1C) : Colors.grey[700],
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: isHeader ? 16 : 14,
+                fontWeight:
+                    isHeader || isAmount ? FontWeight.bold : FontWeight.normal,
+                color:
+                    statusColor ??
+                    (isAmount ? const Color(0xFFB91C1C) : Colors.black87),
+              ),
+              textAlign: TextAlign.right,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double _safeParseNumber(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
   }
 }
