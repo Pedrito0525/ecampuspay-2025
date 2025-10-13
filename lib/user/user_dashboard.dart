@@ -3,6 +3,7 @@ import 'dart:convert';
 // removed unused: import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'security_privacy_screen.dart';
+import 'withdraw_screen.dart';
 import '../services/session_service.dart';
 import '../services/supabase_service.dart';
 import '../services/encryption_service.dart';
@@ -838,6 +839,15 @@ class _HomeTabState extends State<_HomeTab> {
                   subtitle: 'Add money to your wallet',
                   icon: '💰',
                   onTap: () => _showTopUpDialog(),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildActionCard(
+                  title: 'Withdraw',
+                  subtitle: 'Cash out your balance',
+                  icon: '💳',
+                  onTap: () => _navigateToWithdraw(),
                 ),
               ),
             ],
@@ -1754,14 +1764,35 @@ class _HomeTabState extends State<_HomeTab> {
     );
   }
 
+  Future<void> _navigateToWithdraw() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const WithdrawScreen()),
+    );
+
+    // If withdrawal was successful, refresh the UI
+    if (result == true && mounted) {
+      setState(() {
+        // This will refresh the balance display
+      });
+    }
+  }
+
   void _showTopUpDialog() async {
+    print("DEBUG: _showTopUpDialog called");
+
     // Check if Paytaca is enabled
     final isPaytacaEnabled = await SupabaseService.isPaytacaEnabled();
 
+    print("DEBUG: isPaytacaEnabled result: $isPaytacaEnabled");
+
     if (!isPaytacaEnabled) {
+      print("DEBUG: Paytaca is disabled, showing maintenance modal");
       _showMaintenanceModal();
       return;
     }
+
+    print("DEBUG: Paytaca is enabled, showing top-up dialog");
 
     final amounts = [50, 100, 200, 500];
     int? selectedAmount = amounts.first;
@@ -1835,6 +1866,36 @@ class _HomeTabState extends State<_HomeTab> {
     );
   }
 
+  /// Fetches API configuration from the api_configuration table
+  Future<Map<String, dynamic>?> _fetchApiConfiguration() async {
+    try {
+      await SupabaseService.initialize();
+      final response =
+          await SupabaseService.client
+              .from('api_configuration')
+              .select('enabled, xpub_key, wallet_hash')
+              .limit(1)
+              .maybeSingle();
+
+      if (response != null &&
+          response['enabled'] != null &&
+          response['xpub_key'] != null &&
+          response['wallet_hash'] != null) {
+        return {
+          'enabled': response['enabled'] as bool,
+          'xpub_key': response['xpub_key'].toString(),
+          'wallet_hash': response['wallet_hash'].toString(),
+        };
+      }
+
+      print('WARNING: API configuration not found in database');
+      return null;
+    } catch (e) {
+      print('ERROR: Failed to fetch API configuration: $e');
+      return null;
+    }
+  }
+
   Future<void> _startPaytacaInvoiceXpub({required num amountPhp}) async {
     final scaffoldMessenger = ScaffoldMessenger.of(context);
     try {
@@ -1855,11 +1916,28 @@ class _HomeTabState extends State<_HomeTab> {
         return;
       }
 
-      // Use provided xpub and wallet hash
-      const xpubKey =
-          'xpub6Cuc71TPTK7jc6mxmaLwHFEQfXRKxWV6bWCr4jQCT9nbcCr3muJz7n6ATaEUkGSzsT8qgwA4e3Qo9dBkVVXVbgrjHsNiMdJCH6AyYXK3xPR';
-      const walletHash =
-          '2a30d6e75fb1e421de80701ce9d6e4aee76942573155c40fc29e86ffd28571f3';
+      // Fetch API configuration from database
+      final apiConfig = await _fetchApiConfiguration();
+      if (apiConfig == null) {
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Failed to load API configuration. Please try again.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      // Check if Paytaca is enabled
+      final isEnabled = apiConfig['enabled'] as bool;
+      if (!isEnabled) {
+        _showMaintenanceModal();
+        return;
+      }
+
+      final xpubKey = apiConfig['xpub_key'] as String;
+      final walletHash = apiConfig['wallet_hash'] as String;
       const index = 0; // adjust if you need unique address per invoice
 
       final invoice = await PaytacaInvoiceService.createInvoiceWithXpub(
@@ -2381,7 +2459,6 @@ class _InboxTabState extends State<_InboxTab> {
 
   List<Map<String, dynamic>> _notifications = [];
   bool _isLoading = true;
-  int _unreadCount = 0;
   String _selectedFilter = 'All';
   StreamSubscription<List<Map<String, dynamic>>>? _notificationSub;
 
@@ -2539,6 +2616,31 @@ class _InboxTabState extends State<_InboxTab> {
         print('DEBUG: Error fetching top-up transactions: $e');
       }
 
+      // Get withdrawal transactions using adminClient
+      List<Map<String, dynamic>> withdrawalTransactions = [];
+      try {
+        print('DEBUG INBOX: Fetching withdrawal transactions...');
+        final withdrawalResult = await SupabaseService.getUserWithdrawalHistory(
+          studentId: studentId,
+          limit: 50,
+        );
+
+        if (withdrawalResult['success'] == true) {
+          withdrawalTransactions = List<Map<String, dynamic>>.from(
+            withdrawalResult['data'] ?? [],
+          );
+          print(
+            'DEBUG INBOX: Withdrawal transactions found: ${withdrawalTransactions.length}',
+          );
+        } else {
+          print(
+            'DEBUG INBOX: Error fetching withdrawals: ${withdrawalResult['message']}',
+          );
+        }
+      } catch (e) {
+        print('DEBUG INBOX: Error fetching withdrawal transactions: $e');
+      }
+
       // Convert loan data to notification-like format
       final List<Map<String, dynamic>> allNotifications = List.from(
         filteredNotifications,
@@ -2646,6 +2748,57 @@ class _InboxTabState extends State<_InboxTab> {
         });
       }
 
+      // Add withdrawal transactions as notifications
+      print(
+        'DEBUG INBOX: Processing ${withdrawalTransactions.length} withdrawals for notifications...',
+      );
+      for (final withdrawal in withdrawalTransactions) {
+        final amount = withdrawal['amount'];
+        final transactionType =
+            withdrawal['transaction_type']?.toString() ?? '';
+        final metadata = withdrawal['metadata'] as Map<String, dynamic>?;
+
+        String destination = 'Admin';
+        String message;
+
+        if (transactionType == 'Withdraw to Service') {
+          final serviceName =
+              metadata?['destination_service_name']?.toString() ??
+              'Service Account';
+          destination = serviceName;
+          message = 'You withdrew ₱$amount to $serviceName.';
+          print(
+            'DEBUG INBOX: Service withdrawal - Amount: ₱$amount, Destination: $serviceName',
+          );
+        } else {
+          message = 'You withdrew ₱$amount to Admin.';
+          print('DEBUG INBOX: Admin withdrawal - Amount: ₱$amount');
+        }
+
+        final notificationData = {
+          'id': 'withdrawal_${withdrawal['id']}',
+          'title': 'Withdrawal',
+          'message': message,
+          'type': 'withdrawal',
+          'created_at': withdrawal['created_at'],
+          'is_read': true, // Mark as read by default
+          'is_urgent': false,
+          'transaction_id': withdrawal['id'],
+          'amount': amount,
+          'transaction_type': transactionType,
+          'destination': destination,
+          'metadata': metadata,
+        };
+
+        print(
+          'DEBUG INBOX: Adding withdrawal notification: ID=${withdrawal['id']}, Destination=$destination',
+        );
+        allNotifications.add(notificationData);
+      }
+      print(
+        'DEBUG INBOX: Total withdrawal notifications added: ${allNotifications.where((n) => n['type'] == 'withdrawal').length}',
+      );
+
       // Sort all notifications by date (newest first)
       allNotifications.sort(
         (a, b) => DateTime.parse(
@@ -2653,15 +2806,12 @@ class _InboxTabState extends State<_InboxTab> {
         ).compareTo(DateTime.parse(a['created_at'])),
       );
 
-      final unreadCount = allNotifications.where((n) => !n['is_read']).length;
       print(
         'DEBUG: Total notifications including loan data: ${allNotifications.length}',
       );
-      print('DEBUG: Unread count: $unreadCount');
 
       setState(() {
         _notifications = allNotifications;
-        _unreadCount = unreadCount;
         _isLoading = false;
       });
 
@@ -2692,10 +2842,9 @@ class _InboxTabState extends State<_InboxTab> {
             );
             setState(() {
               _notifications = notifications;
-              _unreadCount = notifications.where((n) => !n['is_read']).length;
             });
             print(
-              'DEBUG INBOX: State updated with ${_notifications.length} notifications, $_unreadCount unread',
+              'DEBUG INBOX: State updated with ${_notifications.length} notifications',
             );
           },
           onError: (error) {
@@ -2710,15 +2859,6 @@ class _InboxTabState extends State<_InboxTab> {
       }
     } catch (e) {
       print('ERROR INBOX: Error subscribing to notifications: $e');
-    }
-  }
-
-  Future<void> _markAsRead(int notificationId) async {
-    try {
-      await NotificationService.markAsRead(notificationId);
-      // The stream will automatically update the UI
-    } catch (e) {
-      print('Error marking notification as read: $e');
     }
   }
 
@@ -2751,7 +2891,9 @@ class _InboxTabState extends State<_InboxTab> {
                 type == 'transfer_sent' ||
                 type == 'transfer_received' ||
                 type == 'active_loan' ||
-                type == 'loan_disbursement';
+                type == 'loan_disbursement' ||
+                type == 'top_up' ||
+                type == 'withdrawal';
           }).toList();
     } else {
       filtered = _notifications;
@@ -2795,6 +2937,8 @@ class _InboxTabState extends State<_InboxTab> {
       case 'transfer_sent':
       case 'transfer_received':
         return Colors.blue;
+      case 'withdrawal':
+        return Colors.red[700]!;
       case 'loan_disbursement':
         return Colors.purple;
       case 'active_loan':
@@ -2829,6 +2973,8 @@ class _InboxTabState extends State<_InboxTab> {
         return Icons.send;
       case 'transfer_received':
         return Icons.call_received;
+      case 'withdrawal':
+        return Icons.account_balance_wallet;
       case 'loan_disbursement':
         return Icons.account_balance;
       case 'active_loan':
@@ -2865,7 +3011,6 @@ class _InboxTabState extends State<_InboxTab> {
     print('DEBUG INBOX: build() called');
     print('DEBUG INBOX: _isLoading: $_isLoading');
     print('DEBUG INBOX: _notifications.length: ${_notifications.length}');
-    print('DEBUG INBOX: _unreadCount: $_unreadCount');
     print('DEBUG INBOX: _selectedFilter: $_selectedFilter');
 
     final filteredNotifications = _getFilteredNotifications();
@@ -2891,25 +3036,6 @@ class _InboxTabState extends State<_InboxTab> {
                   ),
                 ),
                 const Spacer(),
-                if (_unreadCount > 0)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '$_unreadCount',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
                 const SizedBox(width: 8),
               ],
             ),
@@ -2983,7 +3109,6 @@ class _InboxTabState extends State<_InboxTab> {
     );
     print('DEBUG INBOX: Notification data: $notification');
 
-    final isRead = notification['is_read'] == true;
     final isUrgent = notification['is_urgent'] == true;
     final createdAt = DateTime.parse(notification['created_at']);
     final timeAgo = _getTimeAgo(createdAt);
@@ -2991,7 +3116,7 @@ class _InboxTabState extends State<_InboxTab> {
     final notificationIcon = _getNotificationIcon(notification);
 
     print(
-      'DEBUG INBOX: Card properties - isRead: $isRead, isUrgent: $isUrgent, timeAgo: $timeAgo',
+      'DEBUG INBOX: Card properties - isUrgent: $isUrgent, timeAgo: $timeAgo',
     );
 
     return Card(
@@ -3001,17 +3126,6 @@ class _InboxTabState extends State<_InboxTab> {
       child: InkWell(
         onTap: () {
           print('DEBUG INBOX: Notification tapped: ${notification['title']}');
-          if (!isRead) {
-            // Only mark as read if it's a real notification (not a transaction notification)
-            final notificationId = notification['id'];
-            if (notificationId is int) {
-              _markAsRead(notificationId);
-            } else {
-              print(
-                'DEBUG INBOX: Skipping mark as read for transaction notification: $notificationId',
-              );
-            }
-          }
           _showTransactionDetailModal(notification);
         },
         borderRadius: BorderRadius.circular(8),
@@ -3047,8 +3161,7 @@ class _InboxTabState extends State<_InboxTab> {
                           child: Text(
                             notification['title'] ?? 'Notification',
                             style: TextStyle(
-                              fontWeight:
-                                  isRead ? FontWeight.normal : FontWeight.bold,
+                              fontWeight: FontWeight.w500,
                               fontSize: 14,
                               color: isUrgent ? Colors.red : null,
                             ),
@@ -3056,15 +3169,6 @@ class _InboxTabState extends State<_InboxTab> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (!isRead)
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(
-                              color: evsuRed,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -3195,46 +3299,45 @@ class _InboxTabState extends State<_InboxTab> {
       // Close loading dialog
       Navigator.of(context).pop();
 
-      // Show transaction details modal
+      // Show transaction details modal - Clean design matching home_tab
       print('DEBUG MODAL: Showing transaction details modal...');
+      final screenSize = MediaQuery.of(context).size;
+      final isSmallScreen = screenSize.width < 600;
+
       showDialog(
         context: context,
         builder:
             (context) => Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+              insetPadding: EdgeInsets.symmetric(
+                horizontal: isSmallScreen ? 16 : 32,
+                vertical: isSmallScreen ? 16 : 32,
               ),
               child: Container(
                 constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.98,
-                  maxHeight: MediaQuery.of(context).size.height * 0.9,
+                  maxWidth: screenSize.width * 0.98,
+                  maxHeight: screenSize.height * 0.9,
                 ),
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Header with receipt-like styling
+                      // Header
                       Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: evsuRed,
-                          borderRadius: const BorderRadius.only(
+                        padding: EdgeInsets.all(isSmallScreen ? 16 : 20),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFB91C1C),
+                          borderRadius: BorderRadius.only(
                             topLeft: Radius.circular(16),
                             topRight: Radius.circular(16),
                           ),
                         ),
                         child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(
-                              _getTransactionIcon(transactionData?['type']),
-                              color: Colors.white,
-                              size: 32,
-                            ),
-                            const SizedBox(height: 8),
                             Text(
                               _getTransactionTitle(transactionData?['type']),
-                              style: TextStyle(
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
@@ -3242,7 +3345,7 @@ class _InboxTabState extends State<_InboxTab> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'ECampusPay',
+                              'Transaction Details',
                               style: TextStyle(
                                 color: Colors.white.withOpacity(0.9),
                                 fontSize: 14,
@@ -3258,21 +3361,13 @@ class _InboxTabState extends State<_InboxTab> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Transaction Type and Status
-                            _buildReceiptRow(
-                              'Transaction Type',
-                              _getTransactionTitle(transactionData?['type']),
-                              isHeader: true,
-                            ),
-                            const SizedBox(height: 16),
-
                             // Transaction ID
                             _buildReceiptRow(
                               'Transaction ID',
                               '#${transactionData?['id']?.toString().padLeft(8, '0') ?? notification['id']?.toString().padLeft(8, '0') ?? 'N/A'}',
                             ),
 
-                            // Amount (if available in transaction data)
+                            // Amount
                             if (_getTransactionAmountFromData(
                                   transactionData,
                                 ) !=
@@ -3308,106 +3403,23 @@ class _InboxTabState extends State<_InboxTab> {
 
                             const SizedBox(height: 20),
 
-                            // Message/Description
-                            Container(
+                            // Close button
+                            SizedBox(
                               width: double.infinity,
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[50],
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.grey[200]!),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Description',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 14,
-                                      color: Colors.grey[700],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    notification['message'] ??
-                                        notification['title'] ??
-                                        'No description available',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey[600],
-                                      height: 1.4,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            // Additional Info if urgent
-                            if (notification['is_urgent'] == true) ...[
-                              const SizedBox(height: 16),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.red[50],
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.red[200]!),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.warning,
-                                      color: Colors.red[600],
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        'This is an urgent notification requiring immediate attention.',
-                                        style: TextStyle(
-                                          color: Colors.red[700],
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-
-                      // Footer Actions
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[50],
-                          borderRadius: const BorderRadius.only(
-                            bottomLeft: Radius.circular(16),
-                            bottomRight: Radius.circular(16),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton(
+                              child: ElevatedButton(
                                 onPressed: () => Navigator.pop(context),
-                                style: OutlinedButton.styleFrom(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFB91C1C),
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 12,
                                   ),
-                                  side: BorderSide(color: evsuRed),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(8),
                                   ),
                                 ),
-                                child: Text(
+                                child: const Text(
                                   'Close',
-                                  style: TextStyle(color: evsuRed),
+                                  style: TextStyle(color: Colors.white),
                                 ),
                               ),
                             ),
@@ -3450,7 +3462,7 @@ class _InboxTabState extends State<_InboxTab> {
     Color? statusColor,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3461,7 +3473,7 @@ class _InboxTabState extends State<_InboxTab> {
               style: TextStyle(
                 fontSize: isHeader ? 16 : 14,
                 fontWeight: isHeader ? FontWeight.bold : FontWeight.w500,
-                color: isHeader ? evsuRed : Colors.grey[700],
+                color: isHeader ? const Color(0xFFB91C1C) : Colors.grey[700],
               ),
             ),
           ),
@@ -3475,7 +3487,7 @@ class _InboxTabState extends State<_InboxTab> {
                     isHeader || isAmount ? FontWeight.bold : FontWeight.normal,
                 color:
                     statusColor ??
-                    (isAmount ? Colors.green[700] : Colors.grey[800]),
+                    (isAmount ? const Color(0xFFB91C1C) : Colors.black87),
               ),
               textAlign: TextAlign.right,
             ),
@@ -3528,6 +3540,8 @@ class _InboxTabState extends State<_InboxTab> {
         return Icons.receipt;
       case 'transfer':
         return Icons.swap_horiz;
+      case 'withdrawal':
+        return Icons.account_balance_wallet;
       default:
         return Icons.receipt_long;
     }
@@ -3547,6 +3561,8 @@ class _InboxTabState extends State<_InboxTab> {
         return 'Service Payment Receipt';
       case 'transfer':
         return 'Transfer Receipt';
+      case 'withdrawal':
+        return 'Withdrawal Receipt';
       default:
         return 'Transaction Receipt';
     }
@@ -3561,6 +3577,7 @@ class _InboxTabState extends State<_InboxTab> {
       case 'transfer':
       case 'transfer_sent':
       case 'transfer_received':
+      case 'withdrawal':
         return 'Completed';
       case 'active_loan':
         return 'Active';
@@ -3578,6 +3595,7 @@ class _InboxTabState extends State<_InboxTab> {
       case 'transfer':
       case 'transfer_sent':
       case 'transfer_received':
+      case 'withdrawal':
         return Colors.green[700]!;
       case 'active_loan':
         return Colors.blue[700]!;
@@ -3603,6 +3621,8 @@ class _InboxTabState extends State<_InboxTab> {
       case 'service_payment':
         return _safeParseNumber(data['total_amount']);
       case 'transfer':
+        return _safeParseNumber(data['amount']);
+      case 'withdrawal':
         return _safeParseNumber(data['amount']);
       case 'active_loan':
         return _safeParseNumber(data['loan_amount']);
@@ -3800,6 +3820,33 @@ class _InboxTabState extends State<_InboxTab> {
         details.add(
           _buildReceiptRow('Status', data['status']?.toString() ?? 'Completed'),
         );
+        break;
+
+      case 'withdrawal':
+        details.add(
+          _buildReceiptRow(
+            'Amount',
+            '₱${_safeParseNumber(data['amount']).toStringAsFixed(2)}',
+          ),
+        );
+        details.add(
+          _buildReceiptRow(
+            'Withdrawal Type',
+            data['transaction_type']?.toString() ?? 'Unknown',
+          ),
+        );
+
+        final metadata = data['metadata'] as Map<String, dynamic>?;
+        if (metadata != null && metadata['destination_service_name'] != null) {
+          details.add(
+            _buildReceiptRow(
+              'Destination',
+              metadata['destination_service_name'].toString(),
+            ),
+          );
+        } else {
+          details.add(_buildReceiptRow('Destination', 'Admin'));
+        }
         break;
     }
 
@@ -4332,6 +4379,81 @@ class _TransactionsTabState extends State<_TransactionsTab> {
         print('DEBUG: Error querying user transfers: $e');
       }
 
+      // 7. Query withdrawal transactions using adminClient via service function
+      try {
+        print('DEBUG WITHDRAWAL: Starting withdrawal query...');
+        print('DEBUG WITHDRAWAL: Student ID: "$studentId"');
+        print(
+          'DEBUG WITHDRAWAL: Using getUserWithdrawalHistory service function (with adminClient)',
+        );
+
+        final withdrawalResult = await SupabaseService.getUserWithdrawalHistory(
+          studentId: studentId,
+          limit: 100,
+        );
+
+        print(
+          'DEBUG WITHDRAWAL: Service function result - success: ${withdrawalResult['success']}',
+        );
+
+        if (withdrawalResult['success'] == true) {
+          final withdrawalData = withdrawalResult['data'] as List?;
+          final withdrawals = withdrawalData ?? [];
+
+          print(
+            'DEBUG WITHDRAWAL: Withdrawal transactions found: ${withdrawals.length}',
+          );
+
+          if (withdrawals.isEmpty) {
+            print('DEBUG WITHDRAWAL: No withdrawals found for this student');
+            print(
+              'DEBUG WITHDRAWAL: This student has not made any withdrawals yet',
+            );
+          } else {
+            print(
+              'DEBUG WITHDRAWAL: Processing ${withdrawals.length} withdrawal records...',
+            );
+          }
+
+          for (final w in withdrawals) {
+            print(
+              'DEBUG WITHDRAWAL: Processing withdrawal ID: ${w['id']}, Amount: ${w['amount']}, Type: ${w['transaction_type']}',
+            );
+            final withdrawalEntry = {
+              'id': w['id'],
+              'transaction_type': 'withdrawal',
+              'amount': _safeParseNumber(w['amount']),
+              'created_at':
+                  w['created_at']?.toString() ??
+                  DateTime.now().toIso8601String(),
+              'withdrawal_type': w['transaction_type'],
+              'destination_service_id': w['destination_service_id'],
+              'metadata': w['metadata'],
+            };
+            merged.add(withdrawalEntry);
+            print(
+              'DEBUG WITHDRAWAL: Added withdrawal to merged list: ${withdrawalEntry['id']}',
+            );
+          }
+          print(
+            'DEBUG WITHDRAWAL: Total transactions in merged list after withdrawals: ${merged.length}',
+          );
+        } else {
+          print(
+            'DEBUG WITHDRAWAL: Service function returned error: ${withdrawalResult['message']}',
+          );
+          print(
+            'DEBUG WITHDRAWAL: Error details: ${withdrawalResult['error']}',
+          );
+        }
+      } catch (e) {
+        print('DEBUG WITHDRAWAL: Error querying withdrawal transactions: $e');
+        print('DEBUG WITHDRAWAL: Error type: ${e.runtimeType}');
+        if (e is Exception) {
+          print('DEBUG WITHDRAWAL: Exception details: $e');
+        }
+      }
+
       // Sort all transactions by date
       merged.sort(
         (a, b) => DateTime.parse(
@@ -4543,6 +4665,13 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                     ),
                     const SizedBox(width: 8),
                     _FilterChip(
+                      label: 'Withdrawals',
+                      isSelected: _selectedFilter == 'Withdrawals',
+                      onTap:
+                          () => setState(() => _selectedFilter = 'Withdrawals'),
+                    ),
+                    const SizedBox(width: 8),
+                    _FilterChip(
                       label: 'Loans',
                       isSelected: _selectedFilter == 'Loans',
                       onTap: () => setState(() => _selectedFilter = 'Loans'),
@@ -4683,12 +4812,46 @@ class _TransactionsTabState extends State<_TransactionsTab> {
   }
 
   List<Map<String, dynamic>> _getFilteredTransactions() {
+    print('DEBUG FILTER: Current filter: $_selectedFilter');
+    print('DEBUG FILTER: Total transactions: ${_transactions.length}');
+
     if (_selectedFilter == 'All') {
+      print('DEBUG FILTER: Showing all transactions');
+      // Count transaction types
+      final typeCounts = <String, int>{};
+      for (final t in _transactions) {
+        final type = t['transaction_type'] as String;
+        typeCounts[type] = (typeCounts[type] ?? 0) + 1;
+      }
+      print('DEBUG FILTER: Transaction types in All: $typeCounts');
       return _transactions;
     } else if (_selectedFilter == 'Top-ups') {
       return _transactions
           .where((t) => t['transaction_type'] == 'top_up')
           .toList();
+    } else if (_selectedFilter == 'Withdrawals') {
+      print('DEBUG FILTER: Filtering for withdrawals...');
+      final filtered =
+          _transactions.where((t) {
+            final type = t['transaction_type'];
+            print(
+              'DEBUG FILTER: Checking transaction type: "$type" (is withdrawal: ${type == 'withdrawal'})',
+            );
+            return type == 'withdrawal';
+          }).toList();
+      print(
+        'DEBUG FILTER: Withdrawals filter applied - found ${filtered.length} transactions',
+      );
+      if (filtered.isNotEmpty) {
+        for (final w in filtered) {
+          print(
+            'DEBUG FILTER: Withdrawal - ID: ${w['id']}, Amount: ${w['amount']}, Type: ${w['withdrawal_type']}',
+          );
+        }
+      } else {
+        print('DEBUG FILTER: No withdrawal transactions found in filter');
+      }
+      return filtered;
     } else if (_selectedFilter == 'Loans') {
       final filtered =
           _transactions
@@ -4747,6 +4910,7 @@ class _TransactionsTabState extends State<_TransactionsTab> {
 
   Widget _buildTransactionCard(Map<String, dynamic> transaction) {
     final transactionType = transaction['transaction_type'] as String;
+    print('DEBUG CARD: Building card for transaction type: "$transactionType"');
     final amount = _safeParseNumber(transaction['amount']);
     final createdAt = DateTime.parse(transaction['created_at']);
     final formattedDate =
@@ -4831,6 +4995,33 @@ class _TransactionsTabState extends State<_TransactionsTab> {
         amountColor = isSent ? Colors.orange : Colors.blue;
         balanceText =
             '₱${_safeParseNumber(transaction['new_balance']).toStringAsFixed(2)}';
+        break;
+
+      case 'withdrawal':
+        print('DEBUG CARD: Rendering withdrawal card');
+        final withdrawalType = transaction['withdrawal_type'] as String?;
+        final metadata = transaction['metadata'] as Map<String, dynamic>?;
+        print(
+          'DEBUG CARD: Withdrawal type: $withdrawalType, Metadata: $metadata',
+        );
+
+        if (withdrawalType == 'Withdraw to Service') {
+          final serviceName =
+              metadata?['destination_service_name']?.toString() ?? 'Service';
+          print('DEBUG CARD: Service withdrawal to: $serviceName');
+          title = 'Withdrawal';
+          subtitle = 'To $serviceName';
+          icon = Icons.account_balance_wallet;
+          gradientColors = [Colors.purple, Colors.purple[700]!];
+        } else {
+          print('DEBUG CARD: Admin withdrawal');
+          title = 'Withdrawal';
+          subtitle = 'Cash out to Admin';
+          icon = Icons.account_balance_wallet;
+          gradientColors = [Colors.red[700]!, Colors.red[900]!];
+        }
+        amountPrefix = '-';
+        amountColor = Colors.red[700]!;
         break;
 
       default:

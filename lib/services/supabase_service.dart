@@ -1341,13 +1341,15 @@ for all to authenticated using (true) with check (true);
 
   // API Configuration Operations
 
-  /// Get API configuration settings
+  /// Get API configuration settings (for admin users)
   static Future<Map<String, dynamic>> getApiConfiguration() async {
     try {
       await SupabaseService.initialize();
 
       print("DEBUG: Fetching API configuration");
-      final response = await SupabaseService.client
+
+      // Use admin client to bypass RLS for admin operations
+      final response = await adminClient
           .from('api_configuration')
           .select('*')
           .limit(1);
@@ -1382,7 +1384,7 @@ for all to authenticated using (true) with check (true);
     }
   }
 
-  /// Save API configuration settings
+  /// Save API configuration settings (for admin users)
   static Future<Map<String, dynamic>> saveApiConfiguration({
     required bool enabled,
     required String xpubKey,
@@ -1397,15 +1399,16 @@ for all to authenticated using (true) with check (true);
         "DEBUG: enabled: $enabled, xpubKey: ${xpubKey.isNotEmpty ? '${xpubKey.substring(0, xpubKey.length > 10 ? 10 : xpubKey.length)}...' : 'empty'}, walletHash: ${walletHash.isNotEmpty ? '${walletHash.substring(0, walletHash.length > 10 ? 10 : walletHash.length)}...' : 'empty'}",
       );
 
+      // Use admin client to bypass RLS for admin operations
       // First, check if any record exists
-      final existingRecords = await client
+      final existingRecords = await adminClient
           .from('api_configuration')
           .select('id')
           .limit(1);
 
       if (existingRecords.isNotEmpty) {
         // Update existing record
-        await client
+        await adminClient
             .from('api_configuration')
             .update({
               'enabled': enabled,
@@ -1423,7 +1426,7 @@ for all to authenticated using (true) with check (true);
         };
       } else {
         // Insert new record
-        await client.from('api_configuration').insert({
+        await adminClient.from('api_configuration').insert({
           'enabled': enabled,
           'xpub_key': xpubKey,
           'wallet_hash': walletHash,
@@ -1452,20 +1455,54 @@ for all to authenticated using (true) with check (true);
     try {
       await SupabaseService.initialize();
 
-      // For students, only read the enabled field to avoid RLS issues
-      final response = await SupabaseService.client
-          .from('api_configuration')
-          .select('enabled')
-          .limit(1);
+      print("DEBUG: Checking Paytaca enabled status...");
+      print("DEBUG: Current user: ${client.auth.currentUser?.id}");
+      print(
+        "DEBUG: Auth state: ${client.auth.currentSession?.user != null ? 'authenticated' : 'not authenticated'}",
+      );
 
-      if (response.isNotEmpty) {
-        return response.first['enabled'] == true;
-      } else {
-        print("DEBUG: No API configuration found, Paytaca disabled by default");
-        return false;
+      // First try with regular client (for authenticated users)
+      try {
+        final response = await SupabaseService.client
+            .from('api_configuration')
+            .select('enabled')
+            .limit(1);
+
+        print("DEBUG: API configuration query response: $response");
+
+        if (response.isNotEmpty) {
+          final enabled = response.first['enabled'] == true;
+          print("DEBUG: Paytaca enabled status: $enabled");
+          return enabled;
+        }
+      } catch (clientError) {
+        print("DEBUG: Regular client query failed: $clientError");
+
+        // If regular client fails, try with admin client as fallback
+        try {
+          print("DEBUG: Trying with admin client as fallback...");
+          final adminResponse = await adminClient
+              .from('api_configuration')
+              .select('enabled')
+              .limit(1);
+
+          print("DEBUG: Admin client query response: $adminResponse");
+
+          if (adminResponse.isNotEmpty) {
+            final enabled = adminResponse.first['enabled'] == true;
+            print("DEBUG: Paytaca enabled status (via admin): $enabled");
+            return enabled;
+          }
+        } catch (adminError) {
+          print("DEBUG: Admin client query also failed: $adminError");
+        }
       }
+
+      print("DEBUG: No API configuration found, Paytaca disabled by default");
+      return false;
     } catch (e) {
       print("DEBUG: Error checking Paytaca status: $e");
+      print("DEBUG: Error details: ${e.toString()}");
       return false;
     }
   }
@@ -2485,6 +2522,8 @@ for all to authenticated using (true) with check (true);
     required String password,
   }) async {
     try {
+      print('DEBUG: Authenticating service account with username: $username');
+
       // Find active service account by username
       final account =
           await client
@@ -2493,6 +2532,13 @@ for all to authenticated using (true) with check (true);
               .ilike('username', username.trim())
               .eq('is_active', true)
               .maybeSingle();
+
+      print(
+        'DEBUG: Service account query result: ${account != null ? 'Found' : 'Not found'}',
+      );
+      if (account != null) {
+        print('DEBUG: Service category: ${account['service_category']}');
+      }
 
       if (account == null) {
         return {
@@ -2504,6 +2550,8 @@ for all to authenticated using (true) with check (true);
 
       final passwordHash = account['password_hash']?.toString() ?? '';
       final isValid = EncryptionService.verifyPassword(password, passwordHash);
+
+      print('DEBUG: Password validation result: $isValid');
 
       if (!isValid) {
         return {
@@ -2720,6 +2768,329 @@ for all to authenticated using (true) with check (true);
         'success': false,
         'error': e.toString(),
         'message': 'Failed to create transaction: ${e.toString()}',
+      };
+    }
+  }
+
+  // Withdrawal Operations
+
+  /// Get all active service accounts for withdraw destination options
+  static Future<Map<String, dynamic>> getAllServiceAccounts() async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await client
+          .from('service_accounts')
+          .select('id, service_name, service_category')
+          .eq('is_active', true)
+          .order('service_name');
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'Service accounts retrieved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to retrieve service accounts: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Process user withdrawal
+  /// If withdrawing to Admin: deduct user balance only (admin doesn't increase)
+  /// If withdrawing to Service: deduct user balance and add to service balance
+  static Future<Map<String, dynamic>> processUserWithdrawal({
+    required String studentId,
+    required double amount,
+    required String destinationType, // 'admin' or 'service'
+    int? destinationServiceId, // Required if destinationType is 'service'
+    String? destinationServiceName,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      if (amount <= 0) {
+        return {
+          'success': false,
+          'message': 'Withdrawal amount must be greater than zero',
+        };
+      }
+
+      // Get user's current balance
+      final userResponse =
+          await adminClient
+              .from(SupabaseConfig.authStudentsTable)
+              .select('balance')
+              .eq('student_id', studentId)
+              .single();
+
+      final currentBalance =
+          (userResponse['balance'] as num?)?.toDouble() ?? 0.0;
+
+      if (currentBalance < amount) {
+        return {
+          'success': false,
+          'message':
+              'Insufficient balance. Current balance: ₱${currentBalance.toStringAsFixed(2)}',
+        };
+      }
+
+      // Deduct from user balance
+      final newUserBalance = currentBalance - amount;
+      await adminClient
+          .from(SupabaseConfig.authStudentsTable)
+          .update({'balance': newUserBalance})
+          .eq('student_id', studentId);
+
+      String transactionType;
+      Map<String, dynamic> metadata = {
+        'destination_type': destinationType,
+        'amount': amount,
+      };
+
+      // If withdrawing to service, add to service balance
+      if (destinationType == 'service') {
+        if (destinationServiceId == null) {
+          return {
+            'success': false,
+            'message':
+                'Destination service ID is required for service withdrawal',
+          };
+        }
+
+        // Get service's current balance
+        final serviceResponse =
+            await adminClient
+                .from('service_accounts')
+                .select('balance')
+                .eq('id', destinationServiceId)
+                .single();
+
+        final serviceBalance =
+            (serviceResponse['balance'] as num?)?.toDouble() ?? 0.0;
+        final newServiceBalance = serviceBalance + amount;
+
+        // Update service balance
+        await adminClient
+            .from('service_accounts')
+            .update({'balance': newServiceBalance})
+            .eq('id', destinationServiceId);
+
+        transactionType = 'Withdraw to Service';
+        metadata['destination_service_id'] = destinationServiceId;
+        metadata['destination_service_name'] =
+            destinationServiceName ?? 'Unknown Service';
+      } else {
+        // Withdrawing to Admin - admin balance doesn't increase
+        transactionType = 'Withdraw to Admin';
+      }
+
+      // Log the withdrawal transaction
+      final transactionResponse =
+          await adminClient
+              .from('withdrawal_transactions')
+              .insert({
+                'student_id': studentId,
+                'amount': amount,
+                'transaction_type': transactionType,
+                'destination_service_id': destinationServiceId,
+                'metadata': metadata,
+              })
+              .select()
+              .single();
+
+      return {
+        'success': true,
+        'data': {
+          'transaction': transactionResponse,
+          'new_balance': newUserBalance,
+        },
+        'message': 'Withdrawal processed successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to process withdrawal: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Process service account withdrawal (can only withdraw to Admin)
+  static Future<Map<String, dynamic>> processServiceWithdrawal({
+    required int serviceAccountId,
+    required double amount,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      if (amount <= 0) {
+        return {
+          'success': false,
+          'message': 'Withdrawal amount must be greater than zero',
+        };
+      }
+
+      // Get service's current balance
+      final serviceResponse =
+          await adminClient
+              .from('service_accounts')
+              .select('balance, service_name')
+              .eq('id', serviceAccountId)
+              .single();
+
+      final currentBalance =
+          (serviceResponse['balance'] as num?)?.toDouble() ?? 0.0;
+      final serviceName =
+          serviceResponse['service_name']?.toString() ?? 'Unknown Service';
+
+      if (currentBalance < amount) {
+        return {
+          'success': false,
+          'message':
+              'Insufficient balance. Current balance: ₱${currentBalance.toStringAsFixed(2)}',
+        };
+      }
+
+      // Deduct from service balance
+      final newServiceBalance = currentBalance - amount;
+      await adminClient
+          .from('service_accounts')
+          .update({'balance': newServiceBalance})
+          .eq('id', serviceAccountId);
+
+      // Log the withdrawal transaction
+      final transactionResponse =
+          await adminClient
+              .from('withdrawal_transactions')
+              .insert({
+                'service_account_id': serviceAccountId,
+                'amount': amount,
+                'transaction_type': 'Service Withdraw to Admin',
+                'metadata': {
+                  'service_account_id': serviceAccountId,
+                  'service_name': serviceName,
+                  'destination_type': 'admin',
+                },
+              })
+              .select()
+              .single();
+
+      return {
+        'success': true,
+        'data': {
+          'transaction': transactionResponse,
+          'new_balance': newServiceBalance,
+        },
+        'message': 'Withdrawal processed successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to process withdrawal: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get withdrawal history for a user
+  static Future<Map<String, dynamic>> getUserWithdrawalHistory({
+    required String studentId,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await adminClient
+          .from('withdrawal_transactions')
+          .select('*')
+          .eq('student_id', studentId)
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'Withdrawal history retrieved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to retrieve withdrawal history: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get withdrawal history for a service account
+  static Future<Map<String, dynamic>> getServiceWithdrawalHistory({
+    required int serviceAccountId,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await adminClient
+          .from('withdrawal_transactions')
+          .select('*')
+          .eq('service_account_id', serviceAccountId)
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'Withdrawal history retrieved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to retrieve withdrawal history: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get all withdrawal transactions (for admin view)
+  static Future<Map<String, dynamic>> getAllWithdrawalTransactions({
+    DateTime? start,
+    DateTime? end,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      var query = adminClient.from('withdrawal_transactions').select('*');
+
+      if (start != null) {
+        query = query.gte('created_at', start.toIso8601String());
+      }
+
+      if (end != null) {
+        query = query.lt('created_at', end.toIso8601String());
+      }
+
+      final response = await query
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'All withdrawal transactions retrieved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message':
+            'Failed to retrieve withdrawal transactions: ${e.toString()}',
       };
     }
   }

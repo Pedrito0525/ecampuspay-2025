@@ -261,6 +261,47 @@ class _CashierTabState extends State<CashierTab> {
                     ),
                   ),
                   SizedBox(width: isWeb ? 16 : 10),
+                  if (selectedProducts.isNotEmpty)
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _showCartModal,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF17A2B8),
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(
+                            vertical: isWeb ? 16 : 12,
+                            horizontal: isWeb ? 24 : 16,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(
+                              isWeb ? 12 : 10,
+                            ),
+                          ),
+                          elevation: 3,
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.shopping_cart, size: isWeb ? 18 : 16),
+                            SizedBox(width: isWeb ? 8 : 6),
+                            Flexible(
+                              child: Text(
+                                isWeb
+                                    ? 'View Cart (${selectedProducts.length})'
+                                    : 'Cart (${selectedProducts.length})',
+                                style: TextStyle(
+                                  fontSize: isWeb ? 16 : (isTablet ? 14 : 12),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (selectedProducts.isNotEmpty)
+                    SizedBox(width: isWeb ? 16 : 10),
                   Expanded(
                     child: ElevatedButton(
                       onPressed: totalAmount > 0 ? _processPayment : null,
@@ -1012,6 +1053,453 @@ class _CashierTabState extends State<CashierTab> {
       if (minPrice == null || p < minPrice) minPrice = p;
     }
     return (minPrice ?? (product['price'] as num).toDouble());
+  }
+
+  void _showCartModal() {
+    final screenSize = MediaQuery.of(context).size;
+    final screenWidth = screenSize.width;
+    final isWeb = screenWidth > 600;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.85,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Column(
+                children: [
+                  // Handle bar
+                  Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+
+                  // Header
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isWeb ? 24 : 20,
+                      vertical: 16,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.shopping_cart,
+                          color: const Color(0xFFB91C1C),
+                          size: isWeb ? 28 : 24,
+                        ),
+                        SizedBox(width: isWeb ? 12 : 10),
+                        Expanded(
+                          child: Text(
+                            'Cart',
+                            style: TextStyle(
+                              fontSize: isWeb ? 24 : 20,
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFF333333),
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(context),
+                          icon: Icon(
+                            Icons.close,
+                            color: Colors.grey.shade600,
+                            size: isWeb ? 24 : 20,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const Divider(height: 1),
+
+                  // Cart items list
+                  Expanded(
+                    child:
+                        selectedProducts.isEmpty
+                            ? _buildEmptyCart(isWeb)
+                            : _buildCartItemsList(isWeb, setModalState),
+                  ),
+
+                  // Cart summary and actions
+                  if (selectedProducts.isNotEmpty)
+                    _buildCartSummary(isWeb, setModalState),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyCart(bool isWeb) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.shopping_cart_outlined,
+            size: isWeb ? 80 : 64,
+            color: Colors.grey.shade400,
+          ),
+          SizedBox(height: isWeb ? 24 : 20),
+          Text(
+            'Your cart is empty',
+            style: TextStyle(
+              fontSize: isWeb ? 20 : 18,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          SizedBox(height: isWeb ? 8 : 6),
+          Text(
+            'Add items to your cart to get started',
+            style: TextStyle(
+              fontSize: isWeb ? 14 : 12,
+              color: Colors.grey.shade500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCartItemsList(bool isWeb, StateSetter setModalState) {
+    return ListView.builder(
+      padding: EdgeInsets.symmetric(horizontal: isWeb ? 24 : 20, vertical: 16),
+      itemCount: selectedProducts.length,
+      itemBuilder: (context, index) {
+        final productId = selectedProducts.keys.elementAt(index);
+        final quantity = selectedProducts[productId]!;
+        final product = products.firstWhere((p) => p['id'] == productId);
+        final price = productPrices[productId] ?? product['price'];
+        final String displayName =
+            selectedSizeNames.containsKey(productId)
+                ? '${product['name']} (${selectedSizeNames[productId]})'
+                : product['name'];
+        final categoryColor = _getCategoryColor(product['category']);
+
+        return Container(
+          margin: EdgeInsets.only(bottom: isWeb ? 16 : 12),
+          padding: EdgeInsets.all(isWeb ? 20 : 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.grey.shade200),
+            borderRadius: BorderRadius.circular(isWeb ? 12 : 10),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              // Category indicator
+              Container(
+                width: isWeb ? 4 : 3,
+                height: isWeb ? 60 : 50,
+                decoration: BoxDecoration(
+                  color: categoryColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              SizedBox(width: isWeb ? 16 : 12),
+
+              // Product details
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName,
+                      style: TextStyle(
+                        fontSize: isWeb ? 16 : 14,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF333333),
+                      ),
+                    ),
+                    SizedBox(height: isWeb ? 4 : 3),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isWeb ? 8 : 6,
+                        vertical: isWeb ? 4 : 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: categoryColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(isWeb ? 6 : 4),
+                      ),
+                      child: Text(
+                        product['category'],
+                        style: TextStyle(
+                          fontSize: isWeb ? 10 : 8,
+                          fontWeight: FontWeight.w500,
+                          color: categoryColor,
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: isWeb ? 8 : 6),
+                    Text(
+                      '₱${price.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: isWeb ? 18 : 16,
+                        fontWeight: FontWeight.bold,
+                        color: categoryColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Quantity controls
+              Row(
+                children: [
+                  // Decrease button
+                  Container(
+                    width: isWeb ? 36 : 32,
+                    height: isWeb ? 36 : 32,
+                    decoration: BoxDecoration(
+                      color:
+                          quantity > 1
+                              ? Colors.red.shade50
+                              : Colors.grey.shade100,
+                      border: Border.all(
+                        color:
+                            quantity > 1
+                                ? Colors.red.shade200
+                                : Colors.grey.shade300,
+                      ),
+                      borderRadius: BorderRadius.circular(isWeb ? 8 : 6),
+                    ),
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      onPressed:
+                          quantity > 1
+                              ? () => _updateQuantityInModal(
+                                productId,
+                                quantity - 1,
+                                setModalState,
+                              )
+                              : null,
+                      icon: Icon(
+                        Icons.remove,
+                        size: isWeb ? 18 : 16,
+                        color:
+                            quantity > 1
+                                ? Colors.red.shade600
+                                : Colors.grey.shade400,
+                      ),
+                    ),
+                  ),
+
+                  // Quantity display
+                  Container(
+                    width: isWeb ? 50 : 45,
+                    height: isWeb ? 36 : 32,
+                    margin: EdgeInsets.symmetric(horizontal: isWeb ? 8 : 6),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      border: Border.all(color: Colors.grey.shade200),
+                      borderRadius: BorderRadius.circular(isWeb ? 8 : 6),
+                    ),
+                    child: Center(
+                      child: Text(
+                        quantity.toString(),
+                        style: TextStyle(
+                          fontSize: isWeb ? 16 : 14,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF333333),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // Increase button
+                  Container(
+                    width: isWeb ? 36 : 32,
+                    height: isWeb ? 36 : 32,
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      border: Border.all(color: Colors.green.shade200),
+                      borderRadius: BorderRadius.circular(isWeb ? 8 : 6),
+                    ),
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      onPressed:
+                          () => _updateQuantityInModal(
+                            productId,
+                            quantity + 1,
+                            setModalState,
+                          ),
+                      icon: Icon(
+                        Icons.add,
+                        size: isWeb ? 18 : 16,
+                        color: Colors.green.shade600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              SizedBox(width: isWeb ? 16 : 12),
+
+              // Remove button
+              IconButton(
+                onPressed:
+                    () => _removeFromCartInModal(productId, setModalState),
+                icon: Icon(
+                  Icons.delete_outline,
+                  color: Colors.red.shade400,
+                  size: isWeb ? 24 : 20,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCartSummary(bool isWeb, StateSetter setModalState) {
+    return Container(
+      padding: EdgeInsets.all(isWeb ? 24 : 20),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        border: Border(top: BorderSide(color: Colors.grey.shade200)),
+      ),
+      child: Column(
+        children: [
+          // Total summary
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Total Amount:',
+                style: TextStyle(
+                  fontSize: isWeb ? 18 : 16,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF333333),
+                ),
+              ),
+              Text(
+                '₱${totalAmount.toStringAsFixed(2)}',
+                style: TextStyle(
+                  fontSize: isWeb ? 24 : 20,
+                  fontWeight: FontWeight.bold,
+                  color: const Color(0xFFB91C1C),
+                ),
+              ),
+            ],
+          ),
+
+          SizedBox(height: isWeb ? 20 : 16),
+
+          // Action buttons
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => _clearOrderInModal(setModalState),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF6C757D),
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(vertical: isWeb ? 16 : 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(isWeb ? 12 : 10),
+                    ),
+                    elevation: 2,
+                  ),
+                  child: Text(
+                    'Clear All',
+                    style: TextStyle(
+                      fontSize: isWeb ? 16 : 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: isWeb ? 16 : 12),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _processPayment();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFB91C1C),
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(vertical: isWeb ? 16 : 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(isWeb ? 12 : 10),
+                    ),
+                    elevation: 3,
+                  ),
+                  child: Text(
+                    'Proceed to Payment',
+                    style: TextStyle(
+                      fontSize: isWeb ? 16 : 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Modal-specific methods for state updates
+  void _updateQuantityInModal(
+    String productId,
+    int newQuantity,
+    StateSetter setModalState,
+  ) {
+    setState(() {
+      if (newQuantity <= 0) {
+        _removeFromCartInModal(productId, setModalState);
+      } else {
+        selectedProducts[productId] = newQuantity;
+        _calculateTotal();
+      }
+    });
+    setModalState(() {}); // Update modal state
+  }
+
+  void _removeFromCartInModal(String productId, StateSetter setModalState) {
+    setState(() {
+      selectedProducts.remove(productId);
+      productPrices.remove(productId);
+      selectedSizeNames.remove(productId);
+      _calculateTotal();
+    });
+    setModalState(() {}); // Update modal state
+  }
+
+  void _clearOrderInModal(StateSetter setModalState) {
+    setState(() {
+      selectedProducts.clear();
+      productPrices.clear();
+      selectedSizeNames.clear();
+      totalAmount = 0.0;
+      showPaymentSuccess = false;
+    });
+    setModalState(() {}); // Update modal state
   }
 
   void _processPayment() {

@@ -745,9 +745,12 @@ class _ServiceDashboardState extends State<ServiceDashboard>
               child: const Text('Cancel'),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 Navigator.pop(context);
-                SessionService.forceClearSession();
+                // Clear session but preserve username
+                await SessionService.clearSession();
+                // Add a small delay to ensure session is fully cleared
+                await Future.delayed(const Duration(milliseconds: 100));
                 Navigator.of(this.context).pushAndRemoveUntil(
                   MaterialPageRoute(builder: (_) => const LoginPage()),
                   (route) => false,

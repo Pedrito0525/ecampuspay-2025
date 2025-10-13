@@ -7,6 +7,7 @@ import 'admin/admin_dashboard.dart';
 import 'services_school/service_dashboard.dart';
 import 'services/session_service.dart';
 import 'services/supabase_service.dart';
+import 'services/username_storage_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -28,12 +29,45 @@ class _LoginPageState extends State<LoginPage> {
   Color _floatingErrorColor = Colors.red;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
+  // Username storage related
+  String? _savedUsername;
+
   @override
   void initState() {
     super.initState();
-    _checkExistingSession();
+    print('DEBUG: LoginPage initState called');
+    _initializeLoginPage();
+  }
+
+  /// Initialize login page components in proper order
+  Future<void> _initializeLoginPage() async {
+    // First check existing session
+    await _checkExistingSession();
+
+    // Then load saved username (after session is cleared if needed)
+    await _loadSavedUsername();
+
+    // Finally setup connectivity monitoring
     _checkInitialConnectivity();
     _subscribeToConnectivityChanges();
+  }
+
+  /// Load saved username from local storage
+  Future<void> _loadSavedUsername() async {
+    print('DEBUG: Loading saved username...');
+    final lastUsername = await UsernameStorageService.getLastUsedUsername();
+    print('DEBUG: Last username retrieved: $lastUsername');
+
+    if (mounted && lastUsername != null && lastUsername.isNotEmpty) {
+      print('DEBUG: Setting username in UI: $lastUsername');
+      setState(() {
+        _savedUsername = lastUsername;
+        studentIdController.text = lastUsername;
+      });
+      print('DEBUG: Username set in UI successfully');
+    } else {
+      print('DEBUG: No saved username found or widget not mounted');
+    }
   }
 
   /// Check initial connectivity status
@@ -67,8 +101,13 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _checkExistingSession() async {
     await SessionService.initialize();
 
-    // Force clear any existing session to ensure fresh login
-    await SessionService.forceClearSession();
+    // Only clear session if user is actually logged in, otherwise preserve username
+    if (SessionService.isLoggedIn) {
+      print('DEBUG: Found existing session, clearing it for fresh login');
+      await SessionService.forceClearSession();
+    } else {
+      print('DEBUG: No existing session found, preserving saved username');
+    }
 
     // Disable auto-login for now to ensure login page is always shown
     // if (SessionService.isLoggedIn) {
@@ -212,6 +251,8 @@ class _LoginPageState extends State<LoginPage> {
       );
 
       if (studentResult['success']) {
+        // Save username locally for future logins
+        await UsernameStorageService.saveUsername(studentId);
         _navigateToDashboard();
         return;
       }
@@ -223,19 +264,40 @@ class _LoginPageState extends State<LoginPage> {
       );
 
       if (adminResult['success']) {
+        // Save username locally for future logins
+        await UsernameStorageService.saveUsername(studentId);
         await _handleAdminLogin(adminResult['data']);
         return;
       }
 
       // Next, try service account authentication (case-insensitive)
+      print(
+        'DEBUG: Attempting service account authentication with: ${studentId.toLowerCase()}',
+      );
       final serviceResult = await SupabaseService.authenticateServiceAccount(
         username: studentId.toLowerCase(),
         password: password,
       );
 
       if (serviceResult['success']) {
-        await _handleServiceLogin(serviceResult['data']);
+        print('DEBUG: Service account authentication successful!');
+        final serviceData = serviceResult['data'];
+        final serviceCategory = serviceData['service_category'];
+        print('DEBUG: Service category: $serviceCategory');
+
+        // Save username locally for future logins (use lowercase for service accounts)
+        final saveResult = await UsernameStorageService.saveUsername(
+          studentId.toLowerCase(),
+        );
+        print(
+          'DEBUG: Service username save result: $saveResult for category: $serviceCategory',
+        );
+        await _handleServiceLogin(serviceData);
         return;
+      } else {
+        print(
+          'DEBUG: Service account authentication failed: ${serviceResult['message']}',
+        );
       }
 
       // If all authentication methods fail, check if it's a network issue first
@@ -399,6 +461,144 @@ class _LoginPageState extends State<LoginPage> {
     setState(() {
       _showFloatingError = false;
     });
+  }
+
+  Widget _buildUsernameSection(Color evsuRed) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Username label
+        Text(
+          'Username',
+          style: TextStyle(
+            fontSize: 14,
+            color: evsuRed.withValues(alpha: 0.9),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // Username text field
+        TextField(
+          controller: studentIdController,
+          keyboardType: TextInputType.text,
+          textInputAction: TextInputAction.next,
+          decoration: InputDecoration(
+            hintText: 'Enter your Username',
+            prefixIcon: Icon(Icons.person, color: evsuRed),
+            focusedBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: evsuRed, width: 2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: evsuRed),
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+
+        // Switch Account button (only show if there's a saved username)
+        if (_savedUsername != null && _savedUsername!.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _showSwitchAccountDialog,
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  minimumSize: const Size(0, 0),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: Icon(Icons.swap_horiz, size: 16, color: evsuRed),
+                label: Text(
+                  'Switch Account',
+                  style: TextStyle(
+                    color: evsuRed,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Show confirmation dialog for switching account
+  void _showSwitchAccountDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        const Color evsuRed = Color(0xFFB01212);
+
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.swap_horiz, color: evsuRed, size: 24),
+              const SizedBox(width: 12),
+              const Text(
+                'Switch Account?',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          content: const Text(
+            'Are you sure you want to switch to a different account? This will clear the saved username.',
+            style: TextStyle(fontSize: 14),
+          ),
+          actions: [
+            // Cancel button
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              style: TextButton.styleFrom(foregroundColor: Colors.grey[700]),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+
+            // Confirm button
+            ElevatedButton(
+              onPressed: () async {
+                // Clear saved username
+                await UsernameStorageService.clearUsername();
+
+                // Clear text fields
+                setState(() {
+                  _savedUsername = null;
+                  studentIdController.clear();
+                  passwordController.clear();
+                });
+
+                // Close dialog
+                if (mounted) {
+                  Navigator.of(context).pop();
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: evsuRed,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text(
+                'Switch',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _buildFloatingErrorModal() {
@@ -847,39 +1047,8 @@ class _LoginPageState extends State<LoginPage> {
 
                     // (Removed in-flow banner; now rendered as floating overlay)
 
-                    // Username
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Username',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: evsuRed.withValues(alpha: 0.9),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: studentIdController,
-                      keyboardType: TextInputType.text,
-                      textInputAction: TextInputAction.next,
-                      decoration: InputDecoration(
-                        hintText: 'Enter your Username',
-                        prefixIcon: const Icon(Icons.person, color: evsuRed),
-                        focusedBorder: OutlineInputBorder(
-                          borderSide: const BorderSide(
-                            color: evsuRed,
-                            width: 2,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderSide: const BorderSide(color: evsuRed),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
+                    // Username section (with saved usernames support)
+                    _buildUsernameSection(evsuRed),
 
                     const SizedBox(height: 36),
 

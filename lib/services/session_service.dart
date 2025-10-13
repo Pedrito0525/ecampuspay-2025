@@ -91,18 +91,41 @@ class SessionService {
   /// Force clear all session data (more aggressive)
   static Future<void> forceClearSession() async {
     try {
+      print('DEBUG: Starting force clear session...');
+
       // Clear local variables
       _currentUserData = null;
       _currentUserType = null;
 
-      // Clear all SharedPreferences data
+      // Get SharedPreferences
       final prefs = await SharedPreferences.getInstance();
-      await prefs.clear(); // This clears ALL stored data
+
+      // Save the username before clearing (if it exists)
+      final savedUsername = prefs.getString('last_used_username');
+      print('DEBUG: Found saved username before clear: $savedUsername');
+
+      // Clear all SharedPreferences data
+      await prefs.clear();
+      print('DEBUG: SharedPreferences cleared');
+
+      // Restore the saved username
+      if (savedUsername != null && savedUsername.isNotEmpty) {
+        await prefs.setString('last_used_username', savedUsername);
+        print('DEBUG: Restored saved username: $savedUsername');
+
+        // Verify the restore
+        final restoredUsername = prefs.getString('last_used_username');
+        print(
+          'DEBUG: Verification - restored username is now: $restoredUsername',
+        );
+      } else {
+        print('DEBUG: No username to restore');
+      }
 
       // Sign out from Supabase
       await SupabaseService.client.auth.signOut();
 
-      print('Session force cleared successfully');
+      print('DEBUG: Session force cleared successfully');
     } catch (e) {
       print('Error force clearing session: $e');
       // Even if there's an error, clear local data

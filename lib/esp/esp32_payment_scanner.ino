@@ -45,6 +45,7 @@
 #define SS_PIN          21  // GPIO21 (SDA/SS)
 
 // MFRC522 instance
+
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 
 // BLE variables

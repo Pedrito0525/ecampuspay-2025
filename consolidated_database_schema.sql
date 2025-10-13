@@ -758,7 +758,6 @@ COMMENT ON COLUMN admin_accounts.created_by IS 'ID of admin who created this acc
 -- =====================================================
 -- END OF CONSOLIDATED SCHEMA
 -- =====================================================
--- Create table to store single-row system update flags
 create table if not exists public.system_update_settings (
   id integer primary key default 1,
   maintenance_mode boolean not null default false,
@@ -767,16 +766,9 @@ create table if not exists public.system_update_settings (
   updated_by text,
   updated_at timestamptz default now()
 );
-
-insert into public.system_update_settings (id)
-values (1)
-on conflict (id) do nothing;
-
+insert into public.system_update_settings (id) values (1) on conflict (id) do nothing;
 alter table public.system_update_settings enable row level security;
-
 drop policy if exists "Allow read to all" on public.system_update_settings;
 create policy "Allow read to all" on public.system_update_settings for select using (true);
-
 drop policy if exists "Allow update via service key" on public.system_update_settings;
-create policy "Allow update via service key" on public.system_update_settings
-for all to authenticated using (true) with check (true);
+create policy "Allow update via service key" on public.system_update_settings for all to authenticated using (true) with check (true);

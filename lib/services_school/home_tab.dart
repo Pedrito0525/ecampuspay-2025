@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../services/session_service.dart';
 import '../services/supabase_service.dart';
 import '../services/encryption_service.dart';
+import 'service_withdraw_screen.dart';
 
 class HomeTab extends StatefulWidget {
   const HomeTab({Key? key}) : super(key: key);
@@ -310,7 +311,25 @@ class _HomeTabState extends State<HomeTab> {
                 ),
               ),
               const SizedBox(width: 16),
-              const Expanded(child: SizedBox.shrink()),
+              Expanded(
+                child: _buildActionCard(
+                  title: 'Withdraw',
+                  subtitle:
+                      operationalType == 'Main'
+                          ? 'Withdraw funds to admin'
+                          : 'Only available for Main accounts',
+                  icon: Icons.account_balance_wallet,
+                  color:
+                      operationalType == 'Main'
+                          ? Colors.red.shade700
+                          : Colors.grey,
+                  onTap:
+                      operationalType == 'Main'
+                          ? () => _navigateToWithdraw()
+                          : null,
+                  isWeb: isWeb,
+                ),
+              ),
             ],
           ),
 
@@ -580,6 +599,45 @@ class _HomeTabState extends State<HomeTab> {
         print('DEBUG HomeTab: Error loading service transactions: $e');
       }
 
+      // Get withdrawal transactions (where users withdrew to this service account)
+      try {
+        print(
+          'DEBUG HomeTab: Fetching withdrawal transactions for service ID: $serviceId',
+        );
+        final withdrawalResult = await SupabaseService.adminClient
+            .from('withdrawal_transactions')
+            .select(
+              'id, student_id, amount, created_at, transaction_type, metadata',
+            )
+            .eq('destination_service_id', serviceId)
+            .eq('transaction_type', 'Withdraw to Service')
+            .order('created_at', ascending: false)
+            .limit(10);
+
+        print(
+          'DEBUG HomeTab: Withdrawal transactions found: ${withdrawalResult.length}',
+        );
+
+        for (final withdrawal in (withdrawalResult as List)) {
+          final amount = (withdrawal['amount'] as num?)?.toDouble() ?? 0.0;
+          final studentId = withdrawal['student_id']?.toString() ?? 'Unknown';
+
+          activities.add({
+            'id': withdrawal['id'],
+            'type': 'withdrawal',
+            'title': 'Balance Transfer Received',
+            'subtitle':
+                '₱${amount.toStringAsFixed(2)} transferred from student $studentId',
+            'amount': amount,
+            'created_at': withdrawal['created_at'],
+            'icon': Icons.account_balance_wallet,
+            'color': Colors.purple,
+          });
+        }
+      } catch (e) {
+        print('DEBUG HomeTab: Error loading withdrawal transactions: $e');
+      }
+
       // Sort all activities by created_at (most recent first)
       activities.sort((a, b) {
         final aTime = DateTime.parse(a['created_at']);
@@ -840,6 +898,20 @@ class _HomeTabState extends State<HomeTab> {
     final timeStr = '$hour:$minute $amPm';
 
     return '$dateStr $timeStr';
+  }
+
+  Future<void> _navigateToWithdraw() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const ServiceWithdrawScreen()),
+    );
+
+    // If withdrawal was successful, refresh the UI
+    if (result == true && mounted) {
+      setState(() {
+        // This will refresh the balance display
+      });
+    }
   }
 
   void _showTopUpDialog() {
@@ -1252,6 +1324,47 @@ class _HomeTabState extends State<HomeTab> {
       } catch (e) {
         print(
           'DEBUG HomeTab: Error loading service transactions for history: $e',
+        );
+      }
+
+      // Get withdrawal transactions (where users withdrew to this service account)
+      try {
+        print(
+          'DEBUG HomeTab: Fetching withdrawal transactions for history, service ID: $serviceId',
+        );
+        final withdrawalResult = await SupabaseService.adminClient
+            .from('withdrawal_transactions')
+            .select(
+              'id, student_id, amount, created_at, transaction_type, metadata',
+            )
+            .eq('destination_service_id', serviceId)
+            .eq('transaction_type', 'Withdraw to Service')
+            .order('created_at', ascending: false)
+            .limit(50); // Load more for history modal
+
+        print(
+          'DEBUG HomeTab: Withdrawal transactions found for history: ${withdrawalResult.length}',
+        );
+
+        for (final withdrawal in (withdrawalResult as List)) {
+          final amount = (withdrawal['amount'] as num?)?.toDouble() ?? 0.0;
+          final studentId = withdrawal['student_id']?.toString() ?? 'Unknown';
+
+          activities.add({
+            'id': withdrawal['id'],
+            'type': 'withdrawal',
+            'title': 'Balance Transfer Received',
+            'subtitle':
+                '₱${amount.toStringAsFixed(2)} transferred from student $studentId',
+            'amount': amount,
+            'created_at': withdrawal['created_at'],
+            'icon': Icons.account_balance_wallet,
+            'color': Colors.purple,
+          });
+        }
+      } catch (e) {
+        print(
+          'DEBUG HomeTab: Error loading withdrawal transactions for history: $e',
         );
       }
 
@@ -1912,6 +2025,39 @@ class _HomeTabState extends State<HomeTab> {
             return {'type': 'top_up', 'data': result, 'id': transactionId};
           }
 
+        case 'withdrawal':
+          {
+            // Fetch withdrawal transaction details
+            final result =
+                await SupabaseService.adminClient
+                    .from('withdrawal_transactions')
+                    .select('*')
+                    .eq('id', transactionId)
+                    .single();
+
+            // Attempt to fetch and decrypt student name
+            try {
+              final studentId = result['student_id']?.toString();
+              if (studentId != null && studentId.isNotEmpty) {
+                final studentRow =
+                    await SupabaseService.client
+                        .from('auth_students')
+                        .select('name')
+                        .eq('student_id', studentId)
+                        .maybeSingle();
+                if (studentRow != null) {
+                  String studentName = studentRow['name']?.toString() ?? '';
+                  if (EncryptionService.looksLikeEncryptedData(studentName)) {
+                    studentName = EncryptionService.decryptData(studentName);
+                  }
+                  result['student_name'] = studentName;
+                }
+              }
+            } catch (_) {}
+
+            return {'type': 'withdrawal', 'data': result, 'id': transactionId};
+          }
+
         default:
           return null;
       }
@@ -1927,6 +2073,8 @@ class _HomeTabState extends State<HomeTab> {
         return 'Top-up Transaction';
       case 'service_payment':
         return 'Service Payment';
+      case 'withdrawal':
+        return 'Balance Transfer Received';
       default:
         return 'Transaction';
     }
@@ -1936,6 +2084,7 @@ class _HomeTabState extends State<HomeTab> {
     switch (transactionType?.toLowerCase()) {
       case 'top_up':
       case 'service_payment':
+      case 'withdrawal':
         return 'Completed';
       default:
         return 'Processed';
@@ -1946,6 +2095,7 @@ class _HomeTabState extends State<HomeTab> {
     switch (transactionType?.toLowerCase()) {
       case 'top_up':
       case 'service_payment':
+      case 'withdrawal':
         return Colors.green[700]!;
       default:
         return Colors.blue[700]!;
@@ -2096,6 +2246,43 @@ class _HomeTabState extends State<HomeTab> {
               );
             }
           }
+        }
+        break;
+
+      case 'withdrawal':
+        details.add(
+          _buildReceiptRow(
+            'Student ID',
+            data['student_id']?.toString() ?? 'N/A',
+          ),
+        );
+        if (data['student_name'] != null &&
+            (data['student_name'] as String).isNotEmpty) {
+          details.add(
+            _buildReceiptRow('Student Name', data['student_name'] as String),
+          );
+        }
+        details.add(
+          _buildReceiptRow(
+            'Transfer Amount',
+            '₱${_safeParseNumber(data['amount']).toStringAsFixed(2)}',
+          ),
+        );
+        details.add(
+          _buildReceiptRow(
+            'Transfer Type',
+            data['transaction_type']?.toString() ?? 'Withdraw to Service',
+          ),
+        );
+
+        final metadata = data['metadata'] as Map<String, dynamic>?;
+        if (metadata != null && metadata['destination_service_name'] != null) {
+          details.add(
+            _buildReceiptRow(
+              'Destination Service',
+              metadata['destination_service_name'].toString(),
+            ),
+          );
         }
         break;
     }
