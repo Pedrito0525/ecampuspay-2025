@@ -1356,7 +1356,14 @@ for all to authenticated using (true) with check (true);
 
       if (response.isNotEmpty) {
         print("DEBUG: API configuration loaded: ${response.first}");
-        return {'success': true, 'data': response.first};
+        final data = Map<String, dynamic>.from(response.first);
+        // Ensure PayMongo keys present with defaults to avoid null checks in UI
+        data.putIfAbsent('paymongo_enabled', () => false);
+        data.putIfAbsent('paymongo_public_key', () => '');
+        data.putIfAbsent('paymongo_secret_key', () => '');
+        data.putIfAbsent('paymongo_webhook_secret', () => '');
+        data.putIfAbsent('paymongo_provider', () => 'gcash');
+        return {'success': true, 'data': data};
       } else {
         print("DEBUG: No API configuration found, returning defaults");
         return {
@@ -1366,6 +1373,12 @@ for all to authenticated using (true) with check (true);
             'xpub_key': '',
             'wallet_hash': '',
             'webhook_url': '',
+            // PayMongo defaults
+            'paymongo_enabled': false,
+            'paymongo_public_key': '',
+            'paymongo_secret_key': '',
+            'paymongo_webhook_secret': '',
+            'paymongo_provider': 'gcash',
           },
         };
       }
@@ -1379,6 +1392,12 @@ for all to authenticated using (true) with check (true);
           'xpub_key': '',
           'wallet_hash': '',
           'webhook_url': '',
+          // PayMongo defaults
+          'paymongo_enabled': false,
+          'paymongo_public_key': '',
+          'paymongo_secret_key': '',
+          'paymongo_webhook_secret': '',
+          'paymongo_provider': 'gcash',
         },
       };
     }
@@ -1446,6 +1465,100 @@ for all to authenticated using (true) with check (true);
       return {
         'success': false,
         'message': 'Error saving API configuration: $e',
+      };
+    }
+  }
+
+  /// Get PayMongo configuration
+  static Future<Map<String, dynamic>> getPaymongoConfiguration() async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await adminClient
+          .from('api_configuration')
+          .select(
+            'paymongo_enabled, paymongo_public_key, paymongo_secret_key, paymongo_webhook_secret, paymongo_provider',
+          )
+          .limit(1);
+
+      if (response.isNotEmpty) {
+        final data = Map<String, dynamic>.from(response.first);
+        return {
+          'success': true,
+          'data': {
+            'paymongo_enabled': data['paymongo_enabled'] ?? false,
+            'paymongo_public_key': data['paymongo_public_key'] ?? '',
+            'paymongo_secret_key': data['paymongo_secret_key'] ?? '',
+            'paymongo_webhook_secret': data['paymongo_webhook_secret'] ?? '',
+            'paymongo_provider': data['paymongo_provider'] ?? 'gcash',
+          },
+        };
+      }
+
+      return {
+        'success': true,
+        'data': {
+          'paymongo_enabled': false,
+          'paymongo_public_key': '',
+          'paymongo_secret_key': '',
+          'paymongo_webhook_secret': '',
+          'paymongo_provider': 'gcash',
+        },
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error fetching PayMongo configuration: $e',
+      };
+    }
+  }
+
+  /// Save PayMongo configuration
+  static Future<Map<String, dynamic>> savePaymongoConfiguration({
+    required bool enabled,
+    required String publicKey,
+    required String secretKey,
+    required String webhookSecret,
+    required String provider,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      // Check if record exists
+      final existingRecords = await adminClient
+          .from('api_configuration')
+          .select('id')
+          .limit(1);
+
+      final payload = {
+        'paymongo_enabled': enabled,
+        'paymongo_public_key': publicKey,
+        'paymongo_secret_key': secretKey,
+        'paymongo_webhook_secret': webhookSecret,
+        'paymongo_provider': provider,
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+
+      if (existingRecords.isNotEmpty) {
+        await adminClient
+            .from('api_configuration')
+            .update(payload)
+            .eq('id', existingRecords.first['id']);
+      } else {
+        await adminClient.from('api_configuration').insert({
+          ...payload,
+          'created_at': DateTime.now().toIso8601String(),
+        });
+      }
+
+      return {
+        'success': true,
+        'message': 'PayMongo configuration saved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'message': 'Error saving PayMongo configuration: $e',
       };
     }
   }

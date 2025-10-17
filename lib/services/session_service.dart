@@ -134,6 +134,39 @@ class SessionService {
     }
   }
 
+  /// Clear session on app termination (preserves username)
+  static Future<void> clearSessionOnAppClose() async {
+    try {
+      print('DEBUG: Clearing session on app close...');
+
+      // Clear local variables
+      _currentUserData = null;
+      _currentUserType = null;
+
+      // Get SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+
+      // Save the username before clearing session data
+      final savedUsername = prefs.getString('last_used_username');
+      print('DEBUG: Preserving username: $savedUsername');
+
+      // Clear only session-related data, preserve username
+      await prefs.remove(_isLoggedInKey);
+      await prefs.remove(_userDataKey);
+      await prefs.remove(_userTypeKey);
+
+      // Sign out from Supabase
+      await SupabaseService.client.auth.signOut();
+
+      print('DEBUG: Session cleared on app close, username preserved');
+    } catch (e) {
+      print('Error clearing session on app close: $e');
+      // Even if there's an error, clear local data
+      _currentUserData = null;
+      _currentUserType = null;
+    }
+  }
+
   /// Check if user is logged in
   static bool get isLoggedIn {
     return _currentUserData != null && _currentUserType != null;

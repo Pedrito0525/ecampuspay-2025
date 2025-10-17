@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
 import '../services/supabase_service.dart';
 import 'admin_dashboard.dart';
 
@@ -20,10 +21,25 @@ class _DashboardTabState extends State<DashboardTab> {
   bool _isLoading = true;
   String? _errorMessage;
 
+  // Chart data
+  List<FlSpot> _transactionSpots = [];
+  List<PieChartSectionData> _balanceDistributionSections = [];
+  List<PieChartSectionData> _categoryBreakdownSections = [];
+  bool _isChartLoading = true;
+
   @override
   void initState() {
     super.initState();
+    // Initialize chart data with empty/default values
+    _initializeChartData();
     _loadDashboardData();
+  }
+
+  void _initializeChartData() {
+    // Initialize with sample data to prevent LateInitializationError
+    _generateTransactionChartData();
+    _generateBalanceDistributionData();
+    _generateCategoryBreakdownData();
   }
 
   Future<void> _loadDashboardData() async {
@@ -34,7 +50,7 @@ class _DashboardTabState extends State<DashboardTab> {
 
     try {
       // Use the combined dashboard stats function for better performance
-      final response = await SupabaseService.adminClient.rpc(
+      final response = await SupabaseService.client.rpc(
         'get_dashboard_stats',
         params: {},
       );
@@ -75,6 +91,9 @@ class _DashboardTabState extends State<DashboardTab> {
           _isLoading = false;
         });
       }
+
+      // Load chart data
+      await _loadChartData();
     } catch (e) {
       setState(() {
         _errorMessage = 'Error loading dashboard data: ${e.toString()}';
@@ -85,7 +104,7 @@ class _DashboardTabState extends State<DashboardTab> {
 
   Future<double> _getTodayTransactions() async {
     try {
-      final response = await SupabaseService.adminClient.rpc(
+      final response = await SupabaseService.client.rpc(
         'get_today_transaction_total',
         params: {},
       );
@@ -97,7 +116,7 @@ class _DashboardTabState extends State<DashboardTab> {
 
   Future<int> _getActiveUsersToday() async {
     try {
-      final response = await SupabaseService.adminClient.rpc(
+      final response = await SupabaseService.client.rpc(
         'get_active_users_today',
         params: {},
       );
@@ -105,6 +124,427 @@ class _DashboardTabState extends State<DashboardTab> {
     } catch (e) {
       return 0;
     }
+  }
+
+  Future<void> _loadChartData() async {
+    setState(() {
+      _isChartLoading = true;
+    });
+
+    try {
+      // Load real data from Supabase
+      await _loadTransactionChartData();
+      await _loadBalanceDistributionData();
+      await _loadCategoryBreakdownData();
+    } catch (e) {
+      print('Error loading chart data: $e');
+      // Keep the initialized sample data as fallback
+    } finally {
+      setState(() {
+        _isChartLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadTransactionChartData() async {
+    try {
+      final now = DateTime.now();
+      _transactionSpots = [];
+
+      // Get data for last 7 days
+      for (int i = 6; i >= 0; i--) {
+        final date = now.subtract(Duration(days: i));
+        final startOfDay = DateTime(date.year, date.month, date.day);
+        final endOfDay = startOfDay.add(const Duration(days: 1));
+
+        // Adjust for Philippines timezone (+8 hours)
+        final phStartOfDay = startOfDay.add(const Duration(hours: 8));
+        final phEndOfDay = endOfDay.add(const Duration(hours: 8));
+
+        double dailyTotal = 0.0;
+
+        // Get top-up transactions
+        final topupResult = await SupabaseService.client
+            .from('top_up_transactions')
+            .select('amount')
+            .eq('transaction_type', 'top_up')
+            .gte('created_at', phStartOfDay.toIso8601String())
+            .lt('created_at', phEndOfDay.toIso8601String());
+
+        for (var transaction in topupResult) {
+          dailyTotal += (transaction['amount'] as num?)?.toDouble() ?? 0.0;
+        }
+
+        // Get service transactions
+        final serviceResult = await SupabaseService.client
+            .from('service_transactions')
+            .select('total_amount')
+            .gte('created_at', phStartOfDay.toIso8601String())
+            .lt('created_at', phEndOfDay.toIso8601String());
+
+        for (var transaction in serviceResult) {
+          dailyTotal +=
+              (transaction['total_amount'] as num?)?.toDouble() ?? 0.0;
+        }
+
+        // Get user transfers
+        final transferResult = await SupabaseService.client
+            .from('user_transfers')
+            .select('amount')
+            .gte('created_at', phStartOfDay.toIso8601String())
+            .lt('created_at', phEndOfDay.toIso8601String());
+
+        for (var transaction in transferResult) {
+          dailyTotal += (transaction['amount'] as num?)?.toDouble() ?? 0.0;
+        }
+
+        // Get loan disbursements
+        final loanResult = await SupabaseService.client
+            .from('top_up_transactions')
+            .select('amount')
+            .eq('transaction_type', 'loan_disbursement')
+            .gte('created_at', phStartOfDay.toIso8601String())
+            .lt('created_at', phEndOfDay.toIso8601String());
+
+        for (var transaction in loanResult) {
+          dailyTotal += (transaction['amount'] as num?)?.toDouble() ?? 0.0;
+        }
+
+        _transactionSpots.add(FlSpot((6 - i).toDouble(), dailyTotal));
+      }
+    } catch (e) {
+      print('Error loading transaction chart data: $e');
+      // Fallback to sample data
+      _generateTransactionChartData();
+    }
+  }
+
+  Future<void> _loadBalanceDistributionData() async {
+    try {
+      // Get total user balance from auth_students
+      final usersResult = await SupabaseService.client
+          .from('auth_students')
+          .select('balance');
+
+      double totalUserBalance = 0.0;
+      for (var user in usersResult) {
+        totalUserBalance += (user['balance'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      // Get total service balance from service_accounts
+      final servicesResult = await SupabaseService.client
+          .from('service_accounts')
+          .select('balance');
+
+      double totalServiceBalance = 0.0;
+      for (var service in servicesResult) {
+        totalServiceBalance += (service['balance'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      // Calculate admin income
+      double adminIncome = 0.0;
+
+      // Top-up income (fees from top-up transactions)
+      final topupIncomeResult = await SupabaseService.client
+          .from('top_up_transactions')
+          .select('amount, transaction_type')
+          .eq('transaction_type', 'top_up');
+
+      for (var transaction in topupIncomeResult) {
+        final amount = (transaction['amount'] as num?)?.toDouble() ?? 0.0;
+        // Calculate fee: ₱50-₱100 => ₱1 flat, ₱100-₱1000 => 1% of amount
+        if (amount >= 50 && amount <= 100) {
+          adminIncome += 1.0;
+        } else if (amount > 100 && amount <= 1000) {
+          adminIncome += amount * 0.01;
+        }
+      }
+
+      // Loan interest income from paid loans
+      final loanIncomeResult = await SupabaseService.client
+          .from('active_loans')
+          .select('interest_amount')
+          .eq('status', 'paid');
+
+      for (var loan in loanIncomeResult) {
+        adminIncome += (loan['interest_amount'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      final totalBalance = totalUserBalance + totalServiceBalance + adminIncome;
+
+      if (totalBalance > 0) {
+        final userPercentage = (totalUserBalance / totalBalance * 100);
+        final servicePercentage = (totalServiceBalance / totalBalance * 100);
+        final adminPercentage = (adminIncome / totalBalance * 100);
+
+        _balanceDistributionSections = [
+          PieChartSectionData(
+            color: Colors.blue,
+            value: userPercentage,
+            title: 'Users\n${userPercentage.toStringAsFixed(1)}%',
+            radius: 50,
+            titleStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          PieChartSectionData(
+            color: Colors.green,
+            value: servicePercentage,
+            title: 'Services\n${servicePercentage.toStringAsFixed(1)}%',
+            radius: 50,
+            titleStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          PieChartSectionData(
+            color: evsuRed,
+            value: adminPercentage,
+            title: 'Admin\n${adminPercentage.toStringAsFixed(1)}%',
+            radius: 50,
+            titleStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+        ];
+      } else {
+        // Fallback to sample data if no data available
+        _generateBalanceDistributionData();
+      }
+    } catch (e) {
+      print('Error loading balance distribution data: $e');
+      // Fallback to sample data
+      _generateBalanceDistributionData();
+    }
+  }
+
+  Future<void> _loadCategoryBreakdownData() async {
+    try {
+      double topupTotal = 0.0;
+      double serviceTotal = 0.0;
+      double loanTotal = 0.0;
+      double transferTotal = 0.0;
+
+      // Get top-up transactions total
+      final topupResult = await SupabaseService.client
+          .from('top_up_transactions')
+          .select('amount')
+          .eq('transaction_type', 'top_up');
+
+      for (var transaction in topupResult) {
+        topupTotal += (transaction['amount'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      // Get service transactions total
+      final serviceResult = await SupabaseService.client
+          .from('service_transactions')
+          .select('total_amount');
+
+      for (var transaction in serviceResult) {
+        serviceTotal +=
+            (transaction['total_amount'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      // Get loan disbursements total
+      final loanResult = await SupabaseService.client
+          .from('top_up_transactions')
+          .select('amount')
+          .eq('transaction_type', 'loan_disbursement');
+
+      for (var transaction in loanResult) {
+        loanTotal += (transaction['amount'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      // Get user transfers total
+      final transferResult = await SupabaseService.client
+          .from('user_transfers')
+          .select('amount');
+
+      for (var transaction in transferResult) {
+        transferTotal += (transaction['amount'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      final totalTransactions =
+          topupTotal + serviceTotal + loanTotal + transferTotal;
+
+      if (totalTransactions > 0) {
+        final topupPercentage = (topupTotal / totalTransactions * 100);
+        final servicePercentage = (serviceTotal / totalTransactions * 100);
+        final loanPercentage = (loanTotal / totalTransactions * 100);
+        final transferPercentage = (transferTotal / totalTransactions * 100);
+
+        _categoryBreakdownSections = [
+          PieChartSectionData(
+            color: Colors.orange,
+            value: topupPercentage,
+            title: 'Top-up\n${topupPercentage.toStringAsFixed(1)}%',
+            radius: 50,
+            titleStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          PieChartSectionData(
+            color: Colors.purple,
+            value: servicePercentage,
+            title: 'Service\n${servicePercentage.toStringAsFixed(1)}%',
+            radius: 50,
+            titleStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          PieChartSectionData(
+            color: Colors.teal,
+            value: loanPercentage,
+            title: 'Loaning\n${loanPercentage.toStringAsFixed(1)}%',
+            radius: 50,
+            titleStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          PieChartSectionData(
+            color: Colors.indigo,
+            value: transferPercentage,
+            title: 'Transfer\n${transferPercentage.toStringAsFixed(1)}%',
+            radius: 50,
+            titleStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+        ];
+      } else {
+        // Fallback to sample data if no data available
+        _generateCategoryBreakdownData();
+      }
+    } catch (e) {
+      print('Error loading category breakdown data: $e');
+      // Fallback to sample data
+      _generateCategoryBreakdownData();
+    }
+  }
+
+  // Fallback methods for sample data
+  void _generateTransactionChartData() {
+    // Sample data for last 7 days
+    _transactionSpots = List.generate(7, (index) {
+      final amount = 1000 + (index * 200) + (index % 3 == 0 ? 500 : 0);
+      return FlSpot(index.toDouble(), amount.toDouble());
+    });
+  }
+
+  void _generateBalanceDistributionData() {
+    _balanceDistributionSections = [
+      PieChartSectionData(
+        color: Colors.blue,
+        value: 60,
+        title: 'Users\n60%',
+        radius: 50,
+        titleStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+      PieChartSectionData(
+        color: Colors.green,
+        value: 25,
+        title: 'Services\n25%',
+        radius: 50,
+        titleStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+      PieChartSectionData(
+        color: evsuRed,
+        value: 15,
+        title: 'Admin\n15%',
+        radius: 50,
+        titleStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    ];
+  }
+
+  void _generateCategoryBreakdownData() {
+    _categoryBreakdownSections = [
+      PieChartSectionData(
+        color: Colors.orange,
+        value: 35,
+        title: 'Top-up\n35%',
+        radius: 50,
+        titleStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+      PieChartSectionData(
+        color: Colors.purple,
+        value: 30,
+        title: 'Service\n30%',
+        radius: 50,
+        titleStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+      PieChartSectionData(
+        color: Colors.teal,
+        value: 25,
+        title: 'Loaning\n25%',
+        radius: 50,
+        titleStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+      PieChartSectionData(
+        color: Colors.indigo,
+        value: 10,
+        title: 'Transfer\n10%',
+        radius: 50,
+        titleStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    ];
+  }
+
+  List<PieChartSectionData> _getEmptyPieChartData() {
+    return [
+      PieChartSectionData(
+        color: Colors.grey,
+        value: 100,
+        title: 'No Data',
+        radius: 50,
+        titleStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    ];
   }
 
   @override
@@ -293,52 +733,246 @@ class _DashboardTabState extends State<DashboardTab> {
             ),
             const SizedBox(height: 24),
 
-            // Recent Activity
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text(
-                      'Recent Activity',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: evsuRed,
-                      ),
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: 5,
-                    itemBuilder:
-                        (context, index) => _ActivityItem(
-                          title: _getActivityTitle(index),
-                          subtitle: _getActivitySubtitle(index),
-                          time: _getActivityTime(index),
-                          icon: _getActivityIcon(index),
-                        ),
-                  ),
-                ],
-              ),
-            ),
+            // Charts Section
+            _buildChartsSection(),
             const SizedBox(height: 100), // Space for bottom nav
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildChartsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Transaction Overview Chart
+        _buildChartCard(
+          title: 'Transaction Overview',
+          subtitle: 'Daily transaction totals for the last 7 days',
+          child: SizedBox(
+            height: 200,
+            child:
+                _isChartLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : LineChart(
+                      LineChartData(
+                        gridData: FlGridData(show: true),
+                        titlesData: FlTitlesData(
+                          leftTitles: AxisTitles(
+                            sideTitles: SideTitles(
+                              showTitles: true,
+                              reservedSize: 40,
+                              interval: 500,
+                              getTitlesWidget: (value, meta) {
+                                return Text(
+                                  '₱${value.toInt()}',
+                                  style: const TextStyle(fontSize: 10),
+                                );
+                              },
+                            ),
+                          ),
+                          bottomTitles: AxisTitles(
+                            sideTitles: SideTitles(
+                              showTitles: true,
+                              getTitlesWidget: (value, meta) {
+                                final days = [
+                                  'Mon',
+                                  'Tue',
+                                  'Wed',
+                                  'Thu',
+                                  'Fri',
+                                  'Sat',
+                                  'Sun',
+                                ];
+                                return Text(
+                                  days[value.toInt() % 7],
+                                  style: const TextStyle(fontSize: 10),
+                                );
+                              },
+                            ),
+                          ),
+                          rightTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false),
+                          ),
+                          topTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false),
+                          ),
+                        ),
+                        borderData: FlBorderData(show: true),
+                        lineBarsData: [
+                          LineChartBarData(
+                            spots:
+                                _transactionSpots.isNotEmpty
+                                    ? _transactionSpots
+                                    : [
+                                      FlSpot(0, 0),
+                                    ], // Fallback to prevent error
+                            isCurved: true,
+                            color: evsuRed,
+                            barWidth: 3,
+                            dotData: FlDotData(show: true),
+                            belowBarData: BarAreaData(
+                              show: true,
+                              color: evsuRed.withOpacity(0.1),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Charts Row
+        LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth > 800) {
+              // Desktop layout - side by side
+              return Row(
+                children: [
+                  Expanded(
+                    child: _buildChartCard(
+                      title: 'Balance Distribution',
+                      subtitle: 'How funds are distributed',
+                      child: SizedBox(
+                        height: 200,
+                        child:
+                            _isChartLoading
+                                ? const Center(
+                                  child: CircularProgressIndicator(),
+                                )
+                                : PieChart(
+                                  PieChartData(
+                                    sections:
+                                        _balanceDistributionSections.isNotEmpty
+                                            ? _balanceDistributionSections
+                                            : _getEmptyPieChartData(),
+                                    centerSpaceRadius: 40,
+                                    sectionsSpace: 2,
+                                  ),
+                                ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildChartCard(
+                      title: 'Transaction Categories',
+                      subtitle: 'Breakdown by transaction type',
+                      child: SizedBox(
+                        height: 200,
+                        child:
+                            _isChartLoading
+                                ? const Center(
+                                  child: CircularProgressIndicator(),
+                                )
+                                : PieChart(
+                                  PieChartData(
+                                    sections:
+                                        _categoryBreakdownSections.isNotEmpty
+                                            ? _categoryBreakdownSections
+                                            : _getEmptyPieChartData(),
+                                    centerSpaceRadius: 40,
+                                    sectionsSpace: 2,
+                                  ),
+                                ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            } else {
+              // Mobile layout - stacked
+              return Column(
+                children: [
+                  _buildChartCard(
+                    title: 'Balance Distribution',
+                    subtitle: 'How funds are distributed',
+                    child: SizedBox(
+                      height: 200,
+                      child:
+                          _isChartLoading
+                              ? const Center(child: CircularProgressIndicator())
+                              : PieChart(
+                                PieChartData(
+                                  sections:
+                                      _balanceDistributionSections.isNotEmpty
+                                          ? _balanceDistributionSections
+                                          : _getEmptyPieChartData(),
+                                  centerSpaceRadius: 40,
+                                  sectionsSpace: 2,
+                                ),
+                              ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildChartCard(
+                    title: 'Transaction Categories',
+                    subtitle: 'Breakdown by transaction type',
+                    child: SizedBox(
+                      height: 200,
+                      child:
+                          _isChartLoading
+                              ? const Center(child: CircularProgressIndicator())
+                              : PieChart(
+                                PieChartData(
+                                  sections:
+                                      _categoryBreakdownSections.isNotEmpty
+                                          ? _categoryBreakdownSections
+                                          : _getEmptyPieChartData(),
+                                  centerSpaceRadius: 40,
+                                  sectionsSpace: 2,
+                                ),
+                              ),
+                    ),
+                  ),
+                ],
+              );
+            }
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChartCard({
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: evsuRed,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 16),
+          child,
+        ],
       ),
     );
   }
@@ -383,50 +1017,6 @@ class _DashboardTabState extends State<DashboardTab> {
         ),
       );
     }
-  }
-
-  static String _getActivityTitle(int index) {
-    const titles = [
-      'New user registration',
-      'System backup completed',
-      'Failed transaction alert',
-      'Vendor payment processed',
-      'User account suspended',
-    ];
-    return titles[index];
-  }
-
-  static String _getActivitySubtitle(int index) {
-    const subtitles = [
-      'Student ID: 2024-12345',
-      'All data backed up successfully',
-      'Transaction ID: TXN-001234',
-      'Vendor: Campus Cafeteria',
-      'User: john.doe@evsu.edu.ph',
-    ];
-    return subtitles[index];
-  }
-
-  static String _getActivityTime(int index) {
-    const times = [
-      '2 min ago',
-      '15 min ago',
-      '1 hour ago',
-      '2 hours ago',
-      '1 day ago',
-    ];
-    return times[index];
-  }
-
-  static IconData _getActivityIcon(int index) {
-    const icons = [
-      Icons.person_add,
-      Icons.backup,
-      Icons.error,
-      Icons.payment,
-      Icons.person_off,
-    ];
-    return icons[index];
   }
 }
 
@@ -532,46 +1122,6 @@ class _QuickActionCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _ActivityItem extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final String time;
-  final IconData icon;
-
-  const _ActivityItem({
-    required this.title,
-    required this.subtitle,
-    required this.time,
-    required this.icon,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: _DashboardTabState.evsuRed.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(icon, color: _DashboardTabState.evsuRed, size: 20),
-      ),
-      title: Text(
-        title,
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-      ),
-      trailing: Text(
-        time,
-        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
       ),
     );
   }

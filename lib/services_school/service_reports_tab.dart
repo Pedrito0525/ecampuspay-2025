@@ -4,6 +4,8 @@ import '../services/supabase_service.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:excel/excel.dart' as excel;
+import 'package:path_provider/path_provider.dart';
 
 class ServiceReportsTab extends StatefulWidget {
   const ServiceReportsTab({super.key});
@@ -19,6 +21,9 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
   String _selectedPeriod = 'Today';
   DateTimeRange? _dateRange;
 
+  // Service data
+  Map<String, String> _serviceNames = {}; // service_id -> service_name
+
   // Data
   List<Map<String, dynamic>> _transactions = [];
   double _totalAmount = 0.0;
@@ -33,6 +38,7 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
     // Default to today's range
     _applyPeriodRange('Today');
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadServiceNames();
       _loadTransactions();
     });
   }
@@ -107,20 +113,86 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
                       ],
                     ),
                   ),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: IconButton(
-                      onPressed: _exportCsvWithRange,
-                      icon: Icon(
-                        Icons.table_chart,
-                        color: Colors.white,
-                        size: isWeb ? 28 : 24,
+                  // Export buttons with responsive layout
+                  if (isWeb)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // CSV Export button
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: IconButton(
+                            onPressed: () => _exportWithRange('CSV'),
+                            icon: Icon(
+                              Icons.table_chart,
+                              color: Colors.white,
+                              size: 28,
+                            ),
+                            tooltip: 'Export CSV',
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        // Excel Export button
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: IconButton(
+                            onPressed: () => _exportWithRange('Excel'),
+                            icon: Icon(
+                              Icons.table_view,
+                              color: Colors.white,
+                              size: 28,
+                            ),
+                            tooltip: 'Export Excel',
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    // Mobile/Tablet: Single export button with dropdown or stack
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: PopupMenuButton<String>(
+                        icon: Icon(
+                          Icons.file_download,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                        tooltip: 'Export Reports',
+                        onSelected: (format) => _exportWithRange(format),
+                        itemBuilder:
+                            (context) => [
+                              PopupMenuItem(
+                                value: 'CSV',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.table_chart, size: 20),
+                                    SizedBox(width: 8),
+                                    Text('Export CSV'),
+                                  ],
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: 'Excel',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.table_view, size: 20),
+                                    SizedBox(width: 8),
+                                    Text('Export Excel'),
+                                  ],
+                                ),
+                              ),
+                            ],
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -363,25 +435,41 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
                       },
                     )
                   else
-                    ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _itemAggregates.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final entry = _itemAggregates.entries.elementAt(index);
-                        final name = entry.key;
-                        final qty = entry.value['quantity'] as int;
-                        final total = (entry.value['total'] as double);
-                        return ListTile(
-                          dense: true,
-                          title: Text(name),
-                          trailing: Text(
-                            '${qty} • ₱${total.toStringAsFixed(2)}',
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        );
-                      },
+                    Container(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height * 0.3,
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        itemCount: _itemAggregates.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final entry = _itemAggregates.entries.elementAt(
+                            index,
+                          );
+                          final name = entry.key;
+                          final qty = entry.value['quantity'] as int;
+                          final total = (entry.value['total'] as double);
+                          return ListTile(
+                            dense: true,
+                            title: Text(
+                              name,
+                              style: TextStyle(
+                                fontSize: isWeb ? 14 : (isTablet ? 13 : 12),
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: Text(
+                              '${qty} • ₱${total.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: isWeb ? 13 : (isTablet ? 12 : 11),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                 ],
               ),
@@ -406,25 +494,82 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
+                  // Transactions header with responsive export buttons
+                  if (isWeb)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Transactions',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: evsuRed,
+                            ),
+                          ),
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () => _exportWithRange('CSV'),
+                              icon: Icon(Icons.table_chart),
+                              label: Text('Export CSV'),
+                            ),
+                            SizedBox(width: 8),
+                            TextButton.icon(
+                              onPressed: () => _exportWithRange('Excel'),
+                              icon: Icon(Icons.table_view),
+                              label: Text('Export Excel'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
                           'Transactions',
                           style: TextStyle(
-                            fontSize: isWeb ? 20 : (isTablet ? 18 : 16),
+                            fontSize: isTablet ? 18 : 16,
                             fontWeight: FontWeight.bold,
                             color: evsuRed,
                           ),
                         ),
-                      ),
-                      TextButton.icon(
-                        onPressed: _exportCsvWithRange,
-                        icon: const Icon(Icons.table_chart),
-                        label: const Text('Export CSV'),
-                      ),
-                    ],
-                  ),
+                        SizedBox(height: 12),
+                        // Export buttons in a row for mobile/tablet
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () => _exportWithRange('CSV'),
+                              icon: Icon(Icons.table_chart, size: 16),
+                              label: Text('CSV'),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                              ),
+                            ),
+                            TextButton.icon(
+                              onPressed: () => _exportWithRange('Excel'),
+                              icon: Icon(Icons.table_view, size: 16),
+                              label: Text('Excel'),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   const SizedBox(height: 12),
                   if (_transactions.isEmpty)
                     Builder(
@@ -440,27 +585,41 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
                       },
                     )
                   else
-                    ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _transactions.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final t = _transactions[index];
-                        final createdAtStr = t['created_at']?.toString() ?? '';
-                        final localDateTime = _formatDateTimeForDisplay(
-                          createdAtStr,
-                        );
-                        return ListTile(
-                          dense: true,
-                          title: Text(
-                            '$localDateTime  •  ₱${(t['total_amount'] as num).toDouble().toStringAsFixed(2)}',
-                          ),
-                          subtitle: Text(
-                            'Items: ' + (t['items'] as List).length.toString(),
-                          ),
-                        );
-                      },
+                    Container(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height * 0.4,
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        itemCount: _transactions.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final t = _transactions[index];
+                          final createdAtStr =
+                              t['created_at']?.toString() ?? '';
+                          final localDateTime = _formatDateTimeForDisplay(
+                            createdAtStr,
+                          );
+                          return ListTile(
+                            dense: true,
+                            title: Text(
+                              '$localDateTime  •  ₱${(t['total_amount'] as num).toDouble().toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontSize: isWeb ? 14 : (isTablet ? 13 : 12),
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              'Items: ' +
+                                  (t['items'] as List).length.toString(),
+                              style: TextStyle(
+                                fontSize: isWeb ? 12 : (isTablet ? 11 : 10),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                 ],
               ),
@@ -516,18 +675,30 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
       final range = _dateRange;
       if (range == null) return;
 
-      final localStart = DateTime(
+      // Convert PHT (UTC+8) to UTC for Supabase query
+      final phtStart = DateTime(
         range.start.year,
         range.start.month,
         range.start.day,
+        0,
+        0,
+        0,
       );
-      final localEnd = DateTime(
+      final phtEnd = DateTime(
         range.end.year,
         range.end.month,
         range.end.day,
-      ).add(const Duration(days: 1));
-      final from = localStart.toUtc().toIso8601String();
-      final to = localEnd.toUtc().toIso8601String();
+        23,
+        59,
+        59,
+      );
+
+      // Convert PHT to UTC (subtract 8 hours)
+      final utcStart = phtStart.subtract(const Duration(hours: 8));
+      final utcEnd = phtEnd.subtract(const Duration(hours: 8));
+
+      final from = utcStart.toIso8601String();
+      final to = utcEnd.toIso8601String();
 
       final serviceIdStr =
           SessionService.currentUserData?['service_id']?.toString() ?? '0';
@@ -544,7 +715,7 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
       // DEBUG: Inputs
       // ignore: avoid_print
       print(
-        'DEBUG ReportsTab: period=$_selectedPeriod, localStart=$localStart, localEnd=$localEnd',
+        'DEBUG ReportsTab: period=$_selectedPeriod, PHT range: $phtStart to $phtEnd',
       );
       print(
         'DEBUG ReportsTab: UTC range from=$from to=$to, rootMainId=$rootMainId',
@@ -637,7 +808,249 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
     }
   }
 
-  // Removed old export (non-range) method; using _exportCsvWithRange instead
+  /// Show date selection dialog with option for single date or date range
+  Future<void> _showDateSelectionDialog(
+    DateTimeRange initialRange,
+    String format,
+  ) async {
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Select Date Range'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Choose the date range for export:'),
+              SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        _showDateRangePicker(initialRange, format);
+                      },
+                      icon: Icon(Icons.date_range),
+                      label: Text('Date Range'),
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        _showSingleDatePicker(format);
+                      },
+                      icon: Icon(Icons.calendar_today),
+                      label: Text('Single Date'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Show date range picker
+  Future<void> _showDateRangePicker(
+    DateTimeRange initialRange,
+    String format,
+  ) async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 3),
+      lastDate: DateTime(now.year + 1),
+      initialDateRange: initialRange,
+    );
+    if (picked != null) {
+      await _performExport(picked, format);
+    }
+  }
+
+  /// Show single date picker
+  Future<void> _showSingleDatePicker(String format) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: DateTime(now.year - 3),
+      lastDate: DateTime(now.year + 1),
+    );
+    if (picked != null) {
+      // Convert single date to date range (same day)
+      final dateRange = DateTimeRange(start: picked, end: picked);
+      await _performExport(dateRange, format);
+    }
+  }
+
+  /// Perform the actual export with the selected date range
+  Future<void> _performExport(DateTimeRange dateRange, String format) async {
+    try {
+      // Determine root main id
+      final serviceIdStr =
+          SessionService.currentUserData?['service_id']?.toString() ?? '0';
+      final serviceId = int.tryParse(serviceIdStr) ?? 0;
+      final operationalType =
+          SessionService.currentUserData?['operational_type']?.toString() ??
+          'Main';
+      final mainServiceIdStr =
+          SessionService.currentUserData?['main_service_id']?.toString();
+      final rootMainId =
+          operationalType == 'Sub'
+              ? (int.tryParse(mainServiceIdStr ?? '') ?? serviceId)
+              : serviceId;
+
+      await SupabaseService.initialize();
+
+      // Convert PHT (UTC+8) to UTC for Supabase query
+      final phtStart = DateTime(
+        dateRange.start.year,
+        dateRange.start.month,
+        dateRange.start.day,
+        0,
+        0,
+        0,
+      );
+      final phtEnd = DateTime(
+        dateRange.end.year,
+        dateRange.end.month,
+        dateRange.end.day,
+        23,
+        59,
+        59,
+      );
+
+      // Convert PHT to UTC (subtract 8 hours)
+      final utcStart = phtStart.subtract(const Duration(hours: 8));
+      final utcEnd = phtEnd.subtract(const Duration(hours: 8));
+
+      final from = utcStart.toIso8601String();
+      final to = utcEnd.toIso8601String();
+
+      // ignore: avoid_print
+      print(
+        'DEBUG ReportsTab(export): PHT range: $phtStart to $phtEnd -> UTC range: $utcStart to $utcEnd',
+      );
+
+      final res = await SupabaseService.client
+          .from('service_transactions')
+          .select(
+            'id, created_at, items, total_amount, service_account_id, main_service_id',
+          )
+          .eq(
+            'main_service_id',
+            rootMainId,
+          ) // Only transactions for the main service
+          .gte('created_at', from)
+          .lt('created_at', to)
+          .order('created_at', ascending: false);
+
+      final tx =
+          (res as List)
+              .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e))
+              .toList();
+
+      // Group data by service_account_id and items
+      final groupedData = <String, Map<String, dynamic>>{};
+      double totalAmount = 0.0;
+
+      for (final t in tx) {
+        totalAmount += (t['total_amount'] as num).toDouble();
+        final serviceAccountId =
+            t['service_account_id']?.toString() ?? 'Unknown';
+        final serviceAccountName =
+            _serviceNames[serviceAccountId] ?? 'Unknown Service';
+        final mainServiceName =
+            _serviceNames[rootMainId.toString()] ?? 'Unknown Main Service';
+
+        final items =
+            (t['items'] as List)
+                .map((e) => Map<String, dynamic>.from(e as Map))
+                .toList();
+
+        for (final item in items) {
+          final itemName = (item['name'] ?? '').toString();
+          final qtyNum = (item['quantity'] as num?)?.toInt() ?? 1;
+          final lineTotal =
+              (item['total'] as num?)?.toDouble() ??
+              ((item['price'] as num?)?.toDouble() ?? 0.0) * qtyNum;
+
+          // Create unique key for grouping
+          final groupKey = '${serviceAccountId}_${itemName}';
+
+          if (groupedData.containsKey(groupKey)) {
+            final existing = groupedData[groupKey]!;
+            groupedData[groupKey] = {
+              'service_transaction': serviceAccountName,
+              'main_transaction': mainServiceName,
+              'item': itemName,
+              'total_count': (existing['total_count'] as int) + qtyNum,
+              'total_amount': (existing['total_amount'] as double) + lineTotal,
+            };
+          } else {
+            groupedData[groupKey] = {
+              'service_transaction': serviceAccountName,
+              'main_transaction': mainServiceName,
+              'item': itemName,
+              'total_count': qtyNum,
+              'total_amount': lineTotal,
+            };
+          }
+        }
+      }
+
+      // Use the provided format
+      if (format == 'Excel') {
+        await _exportToExcel(groupedData, totalAmount, dateRange);
+      } else {
+        await _exportToCsv(groupedData, totalAmount, dateRange);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Export failed: $e')));
+    }
+  }
+
+  /// Load service names for display in exports
+  Future<void> _loadServiceNames() async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await SupabaseService.client
+          .from('service_accounts')
+          .select('id, service_name')
+          .eq('is_active', true);
+
+      final serviceMap = <String, String>{};
+      for (final service in response) {
+        serviceMap[service['id'].toString()] =
+            service['service_name'] as String;
+      }
+
+      if (mounted) {
+        setState(() {
+          _serviceNames = serviceMap;
+        });
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('DEBUG ReportsTab: Failed to load service names: $e');
+    }
+  }
+
+  // Removed old export (non-range) method; using _exportWithRange instead
 
   String _formatDateTimeForDisplay(String dateTimeStr) {
     try {
@@ -680,142 +1093,54 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
     }
   }
 
-  String _formatDateTimeForCsv(String dateTimeStr) {
-    try {
-      final dateTime = DateTime.parse(dateTimeStr);
-      // Convert UTC to local time (assuming UTC+8 for Philippines)
-      final localDateTime = dateTime.add(const Duration(hours: 8));
-
-      // Format for CSV: YYYY-MM-DD HH:MM:SS
-      final year = localDateTime.year;
-      final month = localDateTime.month.toString().padLeft(2, '0');
-      final day = localDateTime.day.toString().padLeft(2, '0');
-      final hour = localDateTime.hour.toString().padLeft(2, '0');
-      final minute = localDateTime.minute.toString().padLeft(2, '0');
-      final second = localDateTime.second.toString().padLeft(2, '0');
-
-      return '$year-$month-$day $hour:$minute:$second';
-    } catch (e) {
-      return dateTimeStr; // Return original if parsing fails
-    }
-  }
-
-  Future<void> _exportCsvWithRange() async {
+  Future<void> _exportWithRange(String format) async {
     try {
       final now = DateTime.now();
       final initialRange =
           _dateRange ??
           DateTimeRange(start: now.subtract(const Duration(days: 6)), end: now);
-      final picked = await showDateRangePicker(
-        context: context,
-        firstDate: DateTime(now.year - 3),
-        lastDate: DateTime(now.year + 1),
-        initialDateRange: initialRange,
-      );
-      if (picked == null) return;
 
-      // Determine root main id
-      final serviceIdStr =
-          SessionService.currentUserData?['service_id']?.toString() ?? '0';
-      final serviceId = int.tryParse(serviceIdStr) ?? 0;
-      final operationalType =
-          SessionService.currentUserData?['operational_type']?.toString() ??
-          'Main';
-      final mainServiceIdStr =
-          SessionService.currentUserData?['main_service_id']?.toString();
-      final rootMainId =
-          operationalType == 'Sub'
-              ? (int.tryParse(mainServiceIdStr ?? '') ?? serviceId)
-              : serviceId;
+      // Show date selection dialog
+      await _showDateSelectionDialog(initialRange, format);
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Export failed: $e')));
+    }
+  }
 
-      await SupabaseService.initialize();
-      final localStart = DateTime(
-        picked.start.year,
-        picked.start.month,
-        picked.start.day,
-      );
-      final localEndNext = DateTime(
-        picked.end.year,
-        picked.end.month,
-        picked.end.day,
-      ).add(const Duration(days: 1));
-      final from = localStart.toUtc().toIso8601String();
-      final to = localEndNext.toUtc().toIso8601String();
-      // ignore: avoid_print
-      print(
-        'DEBUG ReportsTab(export): localStart=$localStart localEndNext=$localEndNext -> UTC from=$from to=$to',
-      );
-
-      final res = await SupabaseService.client
-          .from('service_transactions')
-          .select(
-            'id, created_at, items, total_amount, service_account_id, main_service_id',
-          )
-          .or(
-            'main_service_id.eq.${rootMainId},service_account_id.eq.${rootMainId}',
-          )
-          .gte('created_at', from)
-          .lt('created_at', to)
-          .order('created_at', ascending: false);
-
-      final tx =
-          (res as List)
-              .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e))
-              .toList();
-
-      // Build CSV rows from fetched data
-      final headers = ['Date', 'Item', 'Quantity', 'Price', 'Line Total'];
+  Future<void> _exportToCsv(
+    Map<String, Map<String, dynamic>> groupedData,
+    double totalAmount,
+    DateTimeRange dateRange,
+  ) async {
+    try {
+      // Build CSV headers and rows
+      final headers = [
+        'Service Transaction',
+        'Main Transaction',
+        'Item',
+        'Total Count',
+        'Total Amount',
+      ];
       final rows = <List<String>>[];
-      final itemAgg = <String, Map<String, dynamic>>{};
-      double totalAmount = 0.0;
-      for (final t in tx) {
-        totalAmount += (t['total_amount'] as num).toDouble();
-        final created = t['created_at']?.toString() ?? '';
-        final localDateTime = _formatDateTimeForCsv(created);
-        final items =
-            (t['items'] as List)
-                .map((e) => Map<String, dynamic>.from(e as Map))
-                .toList();
-        for (final it in items) {
-          final name = (it['name'] ?? '').toString();
-          final qtyNum = (it['quantity'] as num?)?.toInt() ?? 1;
-          final priceNum = (it['price'] as num?)?.toDouble() ?? 0.0;
-          final lineNum =
-              (it['total'] as num?)?.toDouble() ?? priceNum * qtyNum;
-          rows.add([
-            localDateTime,
-            name,
-            qtyNum.toString(),
-            priceNum.toStringAsFixed(2),
-            lineNum.toStringAsFixed(2),
-          ]);
-          final prev = itemAgg[name];
-          if (prev == null) {
-            itemAgg[name] = {'quantity': qtyNum, 'total': lineNum};
-          } else {
-            itemAgg[name] = {
-              'quantity': (prev['quantity'] as int) + qtyNum,
-              'total': (prev['total'] as double) + lineNum,
-            };
-          }
-        }
+
+      // Add grouped data rows
+      for (final entry in groupedData.entries) {
+        final data = entry.value;
+        rows.add([
+          data['service_transaction'] as String,
+          data['main_transaction'] as String,
+          data['item'] as String,
+          (data['total_count'] as int).toString(),
+          (data['total_amount'] as double).toStringAsFixed(2),
+        ]);
       }
 
-      // Append summary
-      if (itemAgg.isNotEmpty) {
+      // Add summary row
+      if (groupedData.isNotEmpty) {
         rows.add(['', '', '', '', '']);
-        rows.add(['Item', 'Total Qty', 'Total Amount', '', '']);
-        for (final e in itemAgg.entries) {
-          rows.add([
-            e.key,
-            (e.value['quantity'] as int).toString(),
-            (e.value['total'] as double).toStringAsFixed(2),
-            '',
-            '',
-          ]);
-        }
-        rows.add(['', '', '', '', '']);
-        rows.add(['Overall Total', '', totalAmount.toStringAsFixed(2), '', '']);
+        rows.add(['TOTAL', '', '', '', totalAmount.toStringAsFixed(2)]);
       }
 
       final csv = StringBuffer();
@@ -825,9 +1150,56 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
       }
       final bytes = utf8.encode(csv.toString());
 
-      // Try interactive save
+      // Auto-save to downloads folder
       String defaultFileName =
-          'service_transactions_${picked.start.year}-${picked.start.month.toString().padLeft(2, '0')}-${picked.start.day.toString().padLeft(2, '0')}_to_${picked.end.year}-${picked.end.month.toString().padLeft(2, '0')}-${picked.end.day.toString().padLeft(2, '0')}.csv';
+          'service_transactions_${dateRange.start.year}-${dateRange.start.month.toString().padLeft(2, '0')}-${dateRange.start.day.toString().padLeft(2, '0')}_to_${dateRange.end.year}-${dateRange.end.month.toString().padLeft(2, '0')}-${dateRange.end.day.toString().padLeft(2, '0')}.csv';
+
+      try {
+        // Get downloads directory
+        Directory? downloadsDir;
+        if (Platform.isAndroid) {
+          downloadsDir = Directory('/storage/emulated/0/Download');
+          if (!await downloadsDir.exists()) {
+            downloadsDir = await getExternalStorageDirectory();
+          }
+        } else if (Platform.isIOS) {
+          downloadsDir = await getApplicationDocumentsDirectory();
+        } else {
+          // For desktop platforms
+          downloadsDir = await getDownloadsDirectory();
+        }
+
+        if (downloadsDir != null) {
+          final file = File('${downloadsDir.path}/$defaultFileName');
+          await file.writeAsBytes(bytes, flush: true);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('CSV saved to: ${file.path}'),
+              duration: Duration(seconds: 4),
+              action: SnackBarAction(
+                label: 'Open',
+                onPressed: () {
+                  // Try to open the file location
+                  if (Platform.isWindows) {
+                    Process.run('explorer', ['/select,', file.path]);
+                  } else if (Platform.isMacOS) {
+                    Process.run('open', ['-R', file.path]);
+                  } else if (Platform.isLinux) {
+                    Process.run('xdg-open', [downloadsDir!.path]);
+                  }
+                },
+              ),
+            ),
+          );
+          return;
+        }
+      } catch (saveErr) {
+        // ignore: avoid_print
+        print('DEBUG: Auto-save failed: $saveErr');
+      }
+
+      // Fallback: Try file picker
       String? outputPath;
       try {
         outputPath = await FilePicker.platform.saveFile(
@@ -844,10 +1216,193 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
         try {
           final file = File(outputPath);
           await file.writeAsBytes(bytes, flush: true);
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('CSV saved to: ${file.path}')));
+          return;
+        } catch (writeErr) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to save: $writeErr')));
+        }
+      }
+
+      // Final fallback
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save CSV file. Please try again.')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('CSV export failed: $e')));
+    }
+  }
+
+  Future<void> _exportToExcel(
+    Map<String, Map<String, dynamic>> groupedData,
+    double totalAmount,
+    DateTimeRange dateRange,
+  ) async {
+    try {
+      // Create Excel workbook
+      final excelWorkbook = excel.Excel.createExcel();
+      final sheet = excelWorkbook['Service Transactions'];
+
+      // Set headers
+      final headers = [
+        'Service Transaction',
+        'Main Transaction',
+        'Item',
+        'Total Count',
+        'Total Amount',
+      ];
+      for (int i = 0; i < headers.length; i++) {
+        sheet
+            .cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0))
+            .value = excel.TextCellValue(headers[i]);
+      }
+
+      // Add data rows
+      int rowIndex = 1;
+      for (final entry in groupedData.entries) {
+        final data = entry.value;
+        sheet
+            .cell(
+              excel.CellIndex.indexByColumnRow(
+                columnIndex: 0,
+                rowIndex: rowIndex,
+              ),
+            )
+            .value = excel.TextCellValue(data['service_transaction'] as String);
+        sheet
+            .cell(
+              excel.CellIndex.indexByColumnRow(
+                columnIndex: 1,
+                rowIndex: rowIndex,
+              ),
+            )
+            .value = excel.TextCellValue(data['main_transaction'] as String);
+        sheet
+            .cell(
+              excel.CellIndex.indexByColumnRow(
+                columnIndex: 2,
+                rowIndex: rowIndex,
+              ),
+            )
+            .value = excel.TextCellValue(data['item'] as String);
+        sheet
+            .cell(
+              excel.CellIndex.indexByColumnRow(
+                columnIndex: 3,
+                rowIndex: rowIndex,
+              ),
+            )
+            .value = excel.IntCellValue(data['total_count'] as int);
+        sheet
+            .cell(
+              excel.CellIndex.indexByColumnRow(
+                columnIndex: 4,
+                rowIndex: rowIndex,
+              ),
+            )
+            .value = excel.DoubleCellValue(data['total_amount'] as double);
+        rowIndex++;
+      }
+
+      // Add total row
+      if (groupedData.isNotEmpty) {
+        rowIndex++;
+        sheet
+            .cell(
+              excel.CellIndex.indexByColumnRow(
+                columnIndex: 0,
+                rowIndex: rowIndex,
+              ),
+            )
+            .value = excel.TextCellValue('TOTAL');
+        sheet
+            .cell(
+              excel.CellIndex.indexByColumnRow(
+                columnIndex: 4,
+                rowIndex: rowIndex,
+              ),
+            )
+            .value = excel.DoubleCellValue(totalAmount);
+      }
+
+      // Save Excel file
+      final bytes = excelWorkbook.encode();
+      if (bytes == null) {
+        throw Exception('Failed to encode Excel file');
+      }
+
+      String defaultFileName =
+          'service_transactions_${dateRange.start.year}-${dateRange.start.month.toString().padLeft(2, '0')}-${dateRange.start.day.toString().padLeft(2, '0')}_to_${dateRange.end.year}-${dateRange.end.month.toString().padLeft(2, '0')}-${dateRange.end.day.toString().padLeft(2, '0')}.xlsx';
+
+      try {
+        // Get downloads directory
+        Directory? downloadsDir;
+        if (Platform.isAndroid) {
+          downloadsDir = Directory('/storage/emulated/0/Download');
+          if (!await downloadsDir.exists()) {
+            downloadsDir = await getExternalStorageDirectory();
+          }
+        } else if (Platform.isIOS) {
+          downloadsDir = await getApplicationDocumentsDirectory();
+        } else {
+          // For desktop platforms
+          downloadsDir = await getDownloadsDirectory();
+        }
+
+        if (downloadsDir != null) {
+          final file = File('${downloadsDir.path}/$defaultFileName');
+          await file.writeAsBytes(bytes, flush: true);
+
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Saved CSV: ${file.path} (${bytes.length} bytes)'),
+              content: Text('Excel saved to: ${file.path}'),
+              duration: Duration(seconds: 4),
+              action: SnackBarAction(
+                label: 'Open',
+                onPressed: () {
+                  // Try to open the file location
+                  if (Platform.isWindows) {
+                    Process.run('explorer', ['/select,', file.path]);
+                  } else if (Platform.isMacOS) {
+                    Process.run('open', ['-R', file.path]);
+                  } else if (Platform.isLinux) {
+                    Process.run('xdg-open', [downloadsDir!.path]);
+                  }
+                },
+              ),
             ),
+          );
+          return;
+        }
+      } catch (saveErr) {
+        // ignore: avoid_print
+        print('DEBUG: Auto-save failed: $saveErr');
+      }
+
+      // Fallback: Try file picker
+      String? outputPath;
+      try {
+        outputPath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save Excel report',
+          fileName: defaultFileName,
+          type: FileType.custom,
+          allowedExtensions: ['xlsx'],
+        );
+      } catch (_) {
+        outputPath = null;
+      }
+
+      if (outputPath != null && outputPath.trim().isNotEmpty) {
+        try {
+          final file = File(outputPath);
+          await file.writeAsBytes(bytes, flush: true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Excel saved to: ${file.path}')),
           );
           return;
         } catch (writeErr) {
@@ -857,18 +1412,14 @@ class _ServiceReportsTabState extends State<ServiceReportsTab> {
         }
       }
 
-      // Fallback if no path chosen
+      // Final fallback
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'CSV generated (${bytes.length} bytes). Implement saving/sharing.',
-          ),
-        ),
+        SnackBar(content: Text('Failed to save Excel file. Please try again.')),
       );
     } catch (e) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('CSV export failed: $e')));
+      ).showSnackBar(SnackBar(content: Text('Excel export failed: $e')));
     }
   }
 }

@@ -16,7 +16,7 @@ class SupabaseConfig {
     if (value == null || value.isEmpty) {
       throw StateError('Missing required env: SUPABASE_URL');
     }
-    return value;
+    return _ensureHttps(value);
   }
 
   static String get supabaseAnonKey {
@@ -54,4 +54,28 @@ class SupabaseConfig {
 
   // Helper method to validate that required environment variables are loaded
   static bool get isEnvironmentLoaded => dotenv.isInitialized;
+
+  // Ensure Supabase URL uses HTTPS and has a proper scheme
+  static String _ensureHttps(String url) {
+    var normalized = url.trim();
+    if (normalized.isEmpty) return normalized;
+
+    // Add scheme if missing
+    if (!normalized.startsWith('http://') &&
+        !normalized.startsWith('https://')) {
+      normalized = 'https://' + normalized;
+    }
+
+    // Force https
+    if (normalized.startsWith('http://')) {
+      normalized = normalized.replaceFirst('http://', 'https://');
+    }
+
+    // Remove trailing slash for consistency
+    if (normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+
+    return normalized;
+  }
 }

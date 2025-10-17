@@ -8,6 +8,18 @@ import 'services_school/service_dashboard.dart';
 import 'services/session_service.dart';
 import 'services/supabase_service.dart';
 import 'services/username_storage_service.dart';
+import 'services/activity_alert_service.dart';
+import 'widgets/activity_alert_widget.dart';
+import 'utils/onboarding_utils.dart';
+
+// ============================================================================
+// DEBUG CONFIGURATION
+// ============================================================================
+// To show/hide debug buttons on login page:
+// - Set _showDebugButtons to true to display debug buttons
+// - Set _showDebugButtons to false to hide debug buttons
+// ============================================================================
+const bool _showDebugButtons = false;
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -31,6 +43,10 @@ class _LoginPageState extends State<LoginPage> {
 
   // Username storage related
   String? _savedUsername;
+
+  // Activity alert related (reserved for future use)
+  // Map<String, dynamic>? _pendingAlert;
+  // bool _showActivityAlert = false;
 
   @override
   void initState() {
@@ -385,8 +401,11 @@ class _LoginPageState extends State<LoginPage> {
     _navigateToDashboard();
   }
 
-  void _navigateToDashboard() {
+  void _navigateToDashboard() async {
     if (!mounted) return;
+
+    // Check for recent activity alerts before navigating
+    await _checkForActivityAlerts();
 
     if (SessionService.isStudent) {
       Navigator.of(context).pushReplacement(
@@ -407,6 +426,76 @@ class _LoginPageState extends State<LoginPage> {
         ),
       );
     }
+  }
+
+  /// Check for recent activity and show alert if found
+  Future<void> _checkForActivityAlerts() async {
+    try {
+      // Only check if user has internet connection
+      if (!hasInternetConnection) {
+        print('DEBUG: No internet connection, skipping activity alert check');
+        return;
+      }
+
+      print('DEBUG: Checking for recent activity alerts...');
+      final alertResult = await ActivityAlertService.checkRecentActivity();
+
+      if (alertResult['hasAlert'] == true && mounted) {
+        print('DEBUG: Found activity alert: ${alertResult['title']}');
+
+        // Show the alert before navigating
+        _showActivityAlertDialog(alertResult);
+
+        // Mark as notified to prevent duplicate alerts
+        if (alertResult['transactionId'] != null) {
+          await ActivityAlertService.markAsNotified(
+            alertResult['transactionId'],
+          );
+        }
+      } else {
+        print('DEBUG: No recent activity alerts found');
+      }
+    } catch (e) {
+      print('DEBUG: Error checking activity alerts: $e');
+      // Don't block navigation if alert check fails
+    }
+  }
+
+  /// Show activity alert dialog
+  void _showActivityAlertDialog(Map<String, dynamic> alertData) {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            contentPadding: EdgeInsets.zero,
+            content: Container(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: ActivityAlertWidget(
+                alertData: alertData,
+                onDismiss: () => Navigator.of(context).pop(),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  // Could navigate to transaction details here
+                },
+                isDismissible: true,
+                margin: EdgeInsets.zero,
+                padding: const EdgeInsets.all(20),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Continue'),
+              ),
+            ],
+          ),
+    );
   }
 
   void _showErrorDialog(String message) {
@@ -464,6 +553,12 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Widget _buildUsernameSection(Color evsuRed) {
+    // Determine if field should be read-only
+    final bool isReadOnly =
+        _savedUsername != null &&
+        _savedUsername!.isNotEmpty &&
+        studentIdController.text == _savedUsername;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -483,22 +578,44 @@ class _LoginPageState extends State<LoginPage> {
           controller: studentIdController,
           keyboardType: TextInputType.text,
           textInputAction: TextInputAction.next,
+          readOnly:
+              isReadOnly, // Make field read-only when saved username is present
+          onChanged: (value) {
+            // Only allow editing when field is not read-only
+            if (!isReadOnly &&
+                _savedUsername != null &&
+                value != _savedUsername) {
+              setState(() {
+                _savedUsername =
+                    null; // Clear saved username when manually edited
+              });
+            }
+          },
           decoration: InputDecoration(
             hintText: 'Enter your Username',
             prefixIcon: Icon(Icons.person, color: evsuRed),
+            // Remove the clear button - only Switch Account button should clear
+            suffixIcon: null,
             focusedBorder: OutlineInputBorder(
               borderSide: BorderSide(color: evsuRed, width: 2),
               borderRadius: BorderRadius.circular(12),
             ),
             enabledBorder: OutlineInputBorder(
-              borderSide: BorderSide(color: evsuRed),
+              borderSide: BorderSide(
+                color: isReadOnly ? evsuRed.withOpacity(0.5) : evsuRed,
+              ),
               borderRadius: BorderRadius.circular(12),
             ),
+            // Add visual indication when field is read-only
+            filled: isReadOnly,
+            fillColor: isReadOnly ? evsuRed.withOpacity(0.05) : null,
           ),
         ),
 
-        // Switch Account button (only show if there's a saved username)
-        if (_savedUsername != null && _savedUsername!.isNotEmpty)
+        // Switch Account button (only show if there's a saved username and it matches current input)
+        if (_savedUsername != null &&
+            _savedUsername!.isNotEmpty &&
+            studentIdController.text == _savedUsername)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Align(
@@ -551,7 +668,7 @@ class _LoginPageState extends State<LoginPage> {
             ],
           ),
           content: const Text(
-            'Are you sure you want to switch to a different account? This will clear the saved username.',
+            'Are you sure you want to switch to a different account? This will clear the saved username and allow you to login with a different account.',
             style: TextStyle(fontSize: 14),
           ),
           actions: [
@@ -1181,31 +1298,59 @@ class _LoginPageState extends State<LoginPage> {
 
                     const SizedBox(height: 16),
 
-                    // Debug: Clear Session Button (for development)
-                    if (SessionService.isLoggedIn)
+                    // Debug buttons - only show if debug mode is enabled
+                    if (_showDebugButtons) ...[
+                      // Debug: Clear Session Button (for development)
+                      if (SessionService.isLoggedIn)
+                        Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 16),
+                          child: OutlinedButton(
+                            onPressed: () async {
+                              await SessionService.forceClearSession();
+                              setState(() {});
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Session force cleared. Please login again.',
+                                  ),
+                                  backgroundColor: Colors.orange,
+                                ),
+                              );
+                            },
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.orange),
+                              foregroundColor: Colors.orange,
+                            ),
+                            child: const Text('Clear Session (Debug)'),
+                          ),
+                        ),
+
+                      // Debug: Reset Onboarding Button (for testing)
                       Container(
                         width: double.infinity,
                         margin: const EdgeInsets.only(bottom: 16),
-                        child: OutlinedButton(
+                        child: OutlinedButton.icon(
                           onPressed: () async {
-                            await SessionService.forceClearSession();
-                            setState(() {});
+                            await OnboardingUtils.resetOnboardingForTesting();
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text(
-                                  'Session force cleared. Please login again.',
+                                  'Onboarding reset! Restart app to see onboarding.',
                                 ),
-                                backgroundColor: Colors.orange,
+                                backgroundColor: Colors.green,
                               ),
                             );
                           },
                           style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.orange),
-                            foregroundColor: Colors.orange,
+                            side: const BorderSide(color: Colors.green),
+                            foregroundColor: Colors.green,
                           ),
-                          child: const Text('Clear Session (Debug)'),
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Reset Onboarding (Debug)'),
                         ),
                       ),
+                    ],
 
                     const SizedBox(height: 24),
                   ],

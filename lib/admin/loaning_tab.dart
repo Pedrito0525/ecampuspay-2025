@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/supabase_service.dart';
+import '../services/encryption_service.dart';
 
 class LoaningTab extends StatefulWidget {
   const LoaningTab({super.key});
@@ -76,13 +77,14 @@ class _LoaningTabState extends State<LoaningTab> {
 
       _loanPlans = List<Map<String, dynamic>>.from(loanPlansResponse);
 
-      // Load active loans from database with student names
+      // Load active loans from database with student names (exclude paid loans)
       final activeLoansResponse = await SupabaseService.client
           .from('active_loans')
           .select('''
             *,
             loan_plans!inner(name)
           ''')
+          .neq('status', 'paid')
           .order('created_at', ascending: false);
 
       // Transform the data to include student names
@@ -97,10 +99,21 @@ class _LoaningTabState extends State<LoaningTab> {
                   .eq('student_id', loan['student_id'])
                   .single();
 
-          _activeLoans.add({
-            ...loan,
-            'student_name': studentResponse['name'] ?? 'Unknown Student',
-          });
+          // Decrypt the student name
+          String studentName =
+              studentResponse['name']?.toString() ?? 'Unknown Student';
+
+          try {
+            // Check if the name looks encrypted and decrypt it
+            if (EncryptionService.looksLikeEncryptedData(studentName)) {
+              studentName = EncryptionService.decryptData(studentName);
+            }
+          } catch (e) {
+            print('Failed to decrypt student name: $e');
+            // Keep the original name if decryption fails
+          }
+
+          _activeLoans.add({...loan, 'student_name': studentName});
         } catch (e) {
           // If student not found, use student_id as name
           _activeLoans.add({...loan, 'student_name': loan['student_id']});
@@ -259,7 +272,7 @@ class _LoaningTabState extends State<LoaningTab> {
                             DataCell(Text('$termDays days')),
                             DataCell(
                               Text('${interestRate.toStringAsFixed(1)}%'),
-                              ),
+                            ),
                             DataCell(
                               Text(
                                 '${(plan['penalty_rate'] as num).toStringAsFixed(1)}%/day',
@@ -390,29 +403,29 @@ class _LoaningTabState extends State<LoaningTab> {
               )
             else
               SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        columns: const [
-          DataColumn(label: Text('Student ID')),
-          DataColumn(label: Text('Name')),
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Student ID')),
+                    DataColumn(label: Text('Name')),
                     DataColumn(label: Text('Loan Amount')),
                     DataColumn(label: Text('Interest')),
                     DataColumn(label: Text('Penalty')),
                     DataColumn(label: Text('Total Due')),
-          DataColumn(label: Text('Due Date')),
+                    DataColumn(label: Text('Due Date')),
                     DataColumn(label: Text('Days Left')),
-          DataColumn(label: Text('Status')),
-          DataColumn(label: Text('Actions')),
-        ],
-        rows:
+                    DataColumn(label: Text('Status')),
+                    DataColumn(label: Text('Actions')),
+                  ],
+                  rows:
                       _activeLoans.map((loan) {
                         final dueDate = DateTime.parse(loan['due_date']);
                         final now = DateTime.now();
                         final daysLeft = dueDate.difference(now).inDays;
                         final isOverdue = daysLeft < 0;
 
-              return DataRow(
-                cells: [
+                        return DataRow(
+                          cells: [
                             DataCell(Text(loan['student_id'])),
                             DataCell(Text(loan['student_name'])),
                             DataCell(
@@ -488,10 +501,10 @@ class _LoaningTabState extends State<LoaningTab> {
                                 ),
                               ),
                             ),
-                  DataCell(
-                    Row(
-                      children: [
-                        IconButton(
+                            DataCell(
+                              Row(
+                                children: [
+                                  IconButton(
                                     tooltip: 'Mark as Paid',
                                     onPressed: () => _markLoanAsPaid(loan),
                                     icon: const Icon(
@@ -499,21 +512,21 @@ class _LoaningTabState extends State<LoaningTab> {
                                       size: 18,
                                       color: Colors.green,
                                     ),
-                        ),
-                        IconButton(
+                                  ),
+                                  IconButton(
                                     tooltip: 'View Details',
                                     onPressed: () => _viewLoanDetails(loan),
-                          icon: const Icon(
+                                    icon: const Icon(
                                       Icons.visibility,
-                            size: 18,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            }).toList(),
+                                      size: 18,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      }).toList(),
                 ),
               ),
           ],
@@ -556,17 +569,17 @@ class _LoaningTabState extends State<LoaningTab> {
             builder:
                 (context, setLocal) => AlertDialog(
                   title: Text(isEdit ? 'Edit Loan Plan' : 'Create Loan Plan'),
-              content: SizedBox(
+                  content: SizedBox(
                     width: 500,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextFormField(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextFormField(
                             controller: _planNameController,
-                        decoration: const InputDecoration(
+                            decoration: const InputDecoration(
                               labelText: 'Plan Name',
-                          border: OutlineInputBorder(),
+                              border: OutlineInputBorder(),
                               hintText: 'e.g., Quick Cash - ₱500',
                             ),
                           ),
@@ -576,10 +589,10 @@ class _LoaningTabState extends State<LoaningTab> {
                               Expanded(
                                 child: TextFormField(
                                   controller: _planAmountController,
-                        decoration: const InputDecoration(
+                                  decoration: const InputDecoration(
                                     labelText: 'Loan Amount (₱)',
-                          border: OutlineInputBorder(),
-                        ),
+                                    border: OutlineInputBorder(),
+                                  ),
                                   keyboardType:
                                       const TextInputType.numberWithOptions(
                                         decimal: true,
@@ -590,10 +603,10 @@ class _LoaningTabState extends State<LoaningTab> {
                               Expanded(
                                 child: TextFormField(
                                   controller: _planTermController,
-                        decoration: const InputDecoration(
+                                  decoration: const InputDecoration(
                                     labelText: 'Term (days)',
-                          border: OutlineInputBorder(),
-                        ),
+                                    border: OutlineInputBorder(),
+                                  ),
                                   keyboardType: TextInputType.number,
                                 ),
                               ),
@@ -605,45 +618,45 @@ class _LoaningTabState extends State<LoaningTab> {
                               Expanded(
                                 child: TextFormField(
                                   controller: _planInterestController,
-                        decoration: const InputDecoration(
+                                  decoration: const InputDecoration(
                                     labelText: 'Interest Rate (%)',
-                          border: OutlineInputBorder(),
-                        ),
+                                    border: OutlineInputBorder(),
+                                  ),
                                   keyboardType:
                                       const TextInputType.numberWithOptions(
                                         decimal: true,
-                          ),
-                        ),
-                      ),
+                                      ),
+                                ),
+                              ),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: TextFormField(
                                   controller: _planPenaltyController,
-                        decoration: const InputDecoration(
+                                  decoration: const InputDecoration(
                                     labelText: 'Penalty Rate (%/day)',
-                          border: OutlineInputBorder(),
-                        ),
+                                    border: OutlineInputBorder(),
+                                  ),
                                   keyboardType:
                                       const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                      ),
+                                        decimal: true,
+                                      ),
+                                ),
                               ),
                             ],
                           ),
                           const SizedBox(height: 16),
-                      TextFormField(
+                          TextFormField(
                             controller: _planMinTopupController,
-                        decoration: const InputDecoration(
+                            decoration: const InputDecoration(
                               labelText: 'Minimum Top-up Requirement (₱)',
-                          border: OutlineInputBorder(),
+                              border: OutlineInputBorder(),
                               helperText:
                                   'Students need this amount in total top-ups to be eligible',
-                        ),
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                      ),
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                          ),
                           const SizedBox(height: 16),
                           SwitchListTile(
                             value: _planStatusActive,
@@ -655,40 +668,40 @@ class _LoaningTabState extends State<LoaningTab> {
                               _planStatusActive
                                   ? 'Available to users'
                                   : 'Hidden from users',
-                        ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
                       onPressed: () async {
                         final validation = _validatePlanForm();
-                    if (validation != null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(validation),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                      return;
-                    }
+                        if (validation != null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(validation),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                          return;
+                        }
 
                         await _saveLoanPlan(isEdit, index);
-                    Navigator.pop(context);
-                  },
-                  style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
-                  child: Text(
+                        Navigator.pop(context);
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
+                      child: Text(
                         isEdit ? 'Save Changes' : 'Create Plan',
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ],
                 ),
           ),
     );
@@ -907,24 +920,24 @@ class _LoaningTabState extends State<LoaningTab> {
             title: const Text('Mark Loan as Paid'),
             content: Text(
               'Mark loan for ${loan['student_name']} (₱${(loan['total_amount'] as num).toStringAsFixed(2)}) as paid?',
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel'),
-                  ),
-                  ElevatedButton(
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
                 onPressed: () async {
-                      Navigator.pop(context);
+                  Navigator.pop(context);
                   await _performMarkLoanAsPaid(loan);
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
                 child: const Text(
                   'Mark as Paid',
                   style: TextStyle(color: Colors.white),
-                    ),
-                  ),
-                ],
+                ),
+              ),
+            ],
           ),
     );
   }
@@ -1042,8 +1055,8 @@ class _LoaningTabState extends State<LoaningTab> {
             ),
           ),
           Expanded(child: Text(value)),
-            ],
-          ),
+        ],
+      ),
     );
   }
 }
