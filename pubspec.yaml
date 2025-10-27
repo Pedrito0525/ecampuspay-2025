@@ -52,6 +52,7 @@ dependencies:
   flutter_dotenv: ^6.0.0
   path_provider: ^2.1.4
   fl_chart: ^0.69.0
+  audioplayers: ^6.0.0
 
 dev_dependencies:
   flutter_test:
@@ -83,6 +84,7 @@ flutter:
     - assets/iconblack.png
     - assets/
     - assets/ecampuspaylogo3v.png
+    - assets/applepay.mp3
     - .env
 
 flutter_native_splash:

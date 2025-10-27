@@ -12,6 +12,8 @@ import '../services/supabase_service.dart';
 import '../services/esp32_bluetooth_service_account.dart';
 import '../login_page.dart';
 import '../services/encryption_service.dart';
+import '../user/user_dashboard.dart';
+import '../admin/admin_dashboard.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 // Removed SettingsTab per requirements (settings is a separate screen)
@@ -42,22 +44,10 @@ class SettingsScreen extends StatelessWidget {
               icon: Icons.person,
             ),
             _SettingsItem(
-              title: 'Notifications',
-              subtitle: 'Manage alerts',
-              onTap: () => _showComingSoonDialog(context, 'Notifications'),
-              icon: Icons.notifications,
-            ),
-            _SettingsItem(
-              title: 'Scanner',
-              subtitle: 'View assigned scanner',
-              onTap: () => _showComingSoonDialog(context, 'Scanner Settings'),
-              icon: Icons.qr_code_scanner,
-            ),
-            _SettingsItem(
-              title: 'Appearance',
-              subtitle: 'Theme preferences',
-              onTap: () => _showComingSoonDialog(context, 'Appearance'),
-              icon: Icons.palette,
+              title: 'Connect Scanner',
+              subtitle: 'Pair and connect to assigned scanner',
+              onTap: () => _showScannerPairingDialogClean(context),
+              icon: Icons.bluetooth,
             ),
             _SettingsItem(
               title: 'Send Feedback',
@@ -350,25 +340,6 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
-  void _showComingSoonDialog(BuildContext context, String feature) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Text('$feature Settings'),
-            content: Text(
-              '$feature settings will be available in a future update.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-    );
-  }
-
   void _showFeedbackDialog(BuildContext context) {
     final feedbackController = TextEditingController();
     bool isSubmitting = false;
@@ -503,6 +474,114 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+  void _showScannerPairingDialogClean(BuildContext context) async {
+    if (!context.mounted) return;
+
+    // Get the assigned scanner ID
+    final scannerId = SessionService.currentUserData?['scanner_id']?.toString();
+
+    if (!context.mounted) return;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('How to Pair Your Scanner'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Display assigned scanner device name
+                  if (scannerId != null && scannerId.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFB91C1C).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: const Color(0xFFB91C1C).withOpacity(0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.bluetooth,
+                            color: const Color(0xFFB91C1C),
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Your Assigned Scanner:',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                                Text(
+                                  scannerId,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                    color: Color(0xFFB91C1C),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  const Text(
+                    'Follow these steps to connect:',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 16),
+                  const _InstructionStep(
+                    number: '1',
+                    text: 'Open your phone Settings and go to Bluetooth',
+                  ),
+                  const _InstructionStep(
+                    number: '2',
+                    text: 'Make sure Bluetooth is turned ON',
+                  ),
+                  _InstructionStep(
+                    number: '3',
+                    text:
+                        scannerId != null && scannerId.isNotEmpty
+                            ? 'Look for "$scannerId" in the device list'
+                            : 'Look for your assigned scanner device in the list',
+                  ),
+                  const _InstructionStep(
+                    number: '4',
+                    text: 'Tap on the scanner to pair with it',
+                  ),
+                  const _InstructionStep(
+                    number: '5',
+                    text: 'Return to the app after pairing',
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFB91C1C),
+                ),
+                child: const Text('Got it'),
+              ),
+            ],
+          ),
+    );
+  }
+
   void _showAboutDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -529,6 +608,45 @@ class SettingsScreen extends StatelessWidget {
               ),
             ],
           ),
+    );
+  }
+}
+
+class _InstructionStep extends StatelessWidget {
+  final String number;
+  final String text;
+
+  const _InstructionStep({required this.number, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: const Color(0xFFB91C1C),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                number,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 14))),
+        ],
+      ),
     );
   }
 }
@@ -602,6 +720,7 @@ class _ServiceDashboardState extends State<ServiceDashboard>
   // Scanner connection state
   bool _scannerConnected = false;
   String? _assignedScannerId;
+  bool _scannerPaired = false;
 
   // Connection monitoring
   Timer? _connectionMonitorTimer;
@@ -612,8 +731,87 @@ class _ServiceDashboardState extends State<ServiceDashboard>
   void initState() {
     super.initState();
     _tabController = TabController(length: _tabs.length, vsync: this);
+    _checkSession();
     _initializeServiceScanner();
     _startConnectionMonitoring();
+  }
+
+  void _checkSession() {
+    // Check if session exists and is valid
+    if (!SessionService.isLoggedIn) {
+      // Redirect to login if not logged in
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const LoginPage()),
+        );
+      });
+      return;
+    }
+
+    // If logged in but not a service account, redirect based on user type
+    if (!SessionService.isService) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (SessionService.isStudent) {
+          // Navigate to user dashboard if student
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const UserDashboard()),
+          );
+        } else if (SessionService.isAdmin) {
+          // Navigate to admin dashboard if admin
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const AdminDashboard()),
+          );
+        } else {
+          // Unknown user type, redirect to login
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const LoginPage()),
+          );
+        }
+      });
+    }
+
+    // If we reach here, the session is valid - refresh data to sync
+    _refreshSessionData();
+  }
+
+  Future<void> _refreshSessionData() async {
+    // Refresh service account data to ensure we have the latest information
+    try {
+      // Update service account data from database
+      final username = SessionService.currentUserData?['username'];
+      if (username != null) {
+        final serviceResponse =
+            await SupabaseService.client
+                .from('service_accounts')
+                .select('*')
+                .eq('username', username)
+                .eq('is_active', true)
+                .maybeSingle();
+
+        if (serviceResponse != null) {
+          await SessionService.saveSession({
+            'service_id': serviceResponse['id'].toString(),
+            'service_name': serviceResponse['service_name'] ?? 'Service',
+            'service_category':
+                serviceResponse['service_category'] ?? 'General',
+            'operational_type': serviceResponse['operational_type'] ?? 'Main',
+            'main_service_id':
+                serviceResponse['main_service_id']?.toString() ?? '',
+            'balance': serviceResponse['balance']?.toString() ?? '0.0',
+            'commission_rate':
+                serviceResponse['commission_rate']?.toString() ?? '0.0',
+            'contact_person': serviceResponse['contact_person'] ?? '',
+            'email': serviceResponse['email'] ?? '',
+            'phone': serviceResponse['phone'] ?? '',
+            'username': serviceResponse['username'] ?? '',
+          }, 'service');
+          print('DEBUG: Service session refreshed successfully');
+        }
+      }
+    } catch (e) {
+      print('DEBUG: Failed to refresh service session: $e');
+      // If refresh fails, still keep the user logged in with cached data
+    }
   }
 
   @override
@@ -679,6 +877,23 @@ class _ServiceDashboardState extends State<ServiceDashboard>
     }
 
     try {
+      // First check if the scanner device is paired
+      final isPaired = await _isScannerPaired(scannerId);
+      setState(() {
+        _scannerPaired = isPaired;
+      });
+
+      if (!isPaired) {
+        print(
+          'DEBUG: Scanner $scannerId is not paired with this device. Skipping auto-connect.',
+        );
+        setState(() {
+          _scannerConnected = false;
+        });
+        return;
+      }
+
+      print('DEBUG: Scanner $scannerId is paired. Attempting to connect...');
       print('DEBUG: Disconnecting from any previous scanner...');
       await ESP32BluetoothServiceAccount.disconnect();
 
@@ -729,6 +944,76 @@ class _ServiceDashboardState extends State<ServiceDashboard>
         // This will trigger a rebuild of the entire dashboard,
         // including the home tab which displays the balance
       });
+    }
+  }
+
+  /// Check if the scanner device is paired with the phone
+  Future<bool> _isScannerPaired(String scannerId) async {
+    try {
+      if (Platform.isAndroid) {
+        // Check Bluetooth permissions first
+        final bluetoothStatus = await Permission.bluetoothConnect.status;
+        if (!bluetoothStatus.isGranted) {
+          print('DEBUG: Bluetooth permission not granted for pairing check');
+          return false;
+        }
+
+        print('DEBUG: Checking if scanner $scannerId is paired...');
+
+        // Since we don't have direct access to paired devices list,
+        // we'll use a different approach: try a quick connection attempt
+        // If the device is paired, the connection attempt will succeed quickly
+        // If it's not paired, it will fail immediately
+
+        try {
+          // Store current connection state
+          final wasConnected = ESP32BluetoothServiceAccount.isConnected;
+
+          // Try a quick connection test (with a short timeout)
+          print('DEBUG: Attempting quick connection test to check pairing...');
+
+          // Use a timeout to prevent hanging
+          final connectionTest = Future.delayed(
+            const Duration(seconds: 2),
+            () => false, // Timeout result
+          );
+
+          final actualConnection =
+              ESP32BluetoothServiceAccount.connectToAssignedScanner(scannerId);
+
+          // Race between actual connection and timeout
+          final result = await Future.any([actualConnection, connectionTest]);
+
+          // If we got here, the connection attempt completed
+          if (result == true) {
+            print(
+              'DEBUG: Scanner $scannerId is paired and connected successfully',
+            );
+            // If it wasn't connected before, disconnect to avoid side effects
+            if (!wasConnected) {
+              await ESP32BluetoothServiceAccount.disconnect();
+            }
+            return true;
+          } else {
+            print(
+              'DEBUG: Scanner $scannerId connection test failed or timed out - likely not paired',
+            );
+            return false;
+          }
+        } catch (connectionError) {
+          print(
+            'DEBUG: Connection test failed: $connectionError - scanner likely not paired',
+          );
+          return false;
+        }
+      } else {
+        // For other platforms, assume paired
+        print('DEBUG: Non-Android platform, assuming scanner is paired');
+        return true;
+      }
+    } catch (e) {
+      print('DEBUG: Error checking pairing status: $e');
+      return false;
     }
   }
 
@@ -798,12 +1083,25 @@ class _ServiceDashboardState extends State<ServiceDashboard>
         final shouldAttempt =
             _lastReconnectAttemptAt == null ||
             now.difference(_lastReconnectAttemptAt!) >= _reconnectInterval;
+
         if (!isConnecting && shouldAttempt) {
-          _lastReconnectAttemptAt = now;
-          print(
-            'DEBUG: Proactive reconnect attempt to scanner ${_assignedScannerId}...',
-          );
-          await _connectToAssignedScanner(_assignedScannerId!);
+          // Check if scanner is paired before attempting reconnect
+          final isPaired = await _isScannerPaired(_assignedScannerId!);
+          setState(() {
+            _scannerPaired = isPaired;
+          });
+
+          if (isPaired) {
+            _lastReconnectAttemptAt = now;
+            print(
+              'DEBUG: Proactive reconnect attempt to scanner ${_assignedScannerId}...',
+            );
+            await _connectToAssignedScanner(_assignedScannerId!);
+          } else {
+            print(
+              'DEBUG: Scanner ${_assignedScannerId} is not paired. Skipping reconnect attempt.',
+            );
+          }
         }
       }
     } catch (e) {
@@ -926,12 +1224,16 @@ class _ServiceDashboardState extends State<ServiceDashboard>
                                     Text(
                                       _scannerConnected
                                           ? 'Scanner Connected'
-                                          : 'Scanner Offline',
+                                          : _scannerPaired
+                                          ? 'Scanner Paired'
+                                          : 'Scanner Not Paired',
                                       style: TextStyle(
                                         color:
                                             _scannerConnected
                                                 ? Colors.green.shade200
-                                                : Colors.orange.shade200,
+                                                : _scannerPaired
+                                                ? Colors.orange.shade200
+                                                : Colors.red.shade200,
                                         fontSize: isWeb ? 12 : 11,
                                         fontWeight: FontWeight.w600,
                                       ),
@@ -949,7 +1251,9 @@ class _ServiceDashboardState extends State<ServiceDashboard>
                                   color:
                                       _scannerConnected
                                           ? Colors.green.withOpacity(0.8)
-                                          : Colors.orange.withOpacity(0.8),
+                                          : _scannerPaired
+                                          ? Colors.orange.withOpacity(0.8)
+                                          : Colors.red.withOpacity(0.8),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Row(
@@ -958,7 +1262,9 @@ class _ServiceDashboardState extends State<ServiceDashboard>
                                     Icon(
                                       _scannerConnected
                                           ? Icons.bluetooth_connected
-                                          : Icons.bluetooth_disabled,
+                                          : _scannerPaired
+                                          ? Icons.bluetooth_disabled
+                                          : Icons.bluetooth_searching,
                                       color: Colors.white,
                                       size: isWeb ? 14 : 12,
                                     ),
@@ -967,7 +1273,9 @@ class _ServiceDashboardState extends State<ServiceDashboard>
                                       Text(
                                         _scannerConnected
                                             ? 'Online'
-                                            : 'Offline',
+                                            : _scannerPaired
+                                            ? 'Paired'
+                                            : 'Not Paired',
                                         style: TextStyle(
                                           color: Colors.white,
                                           fontSize: isWeb ? 12 : 11,

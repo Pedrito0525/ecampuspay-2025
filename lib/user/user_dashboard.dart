@@ -12,6 +12,8 @@ import '../services/loan_reminder_service.dart';
 import '../login_page.dart';
 import 'dart:async'; // Added for StreamSubscription
 import '../services/paytaca_invoice_service.dart';
+import '../admin/admin_dashboard.dart';
+import '../services_school/service_dashboard.dart';
 
 class UserDashboard extends StatefulWidget {
   const UserDashboard({super.key});
@@ -60,13 +62,57 @@ class _UserDashboardState extends State<UserDashboard> {
   }
 
   void _checkSession() {
-    if (!SessionService.isLoggedIn || !SessionService.isStudent) {
-      // Redirect to login if not logged in or not a student
+    // Check if session exists and is valid
+    if (!SessionService.isLoggedIn) {
+      // Redirect to login if not logged in
       WidgetsBinding.instance.addPostFrameCallback((_) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (context) => const LoginPage()),
         );
       });
+      return;
+    }
+
+    // If logged in but not a student, redirect based on user type
+    if (!SessionService.isStudent) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (SessionService.isAdmin) {
+          // Navigate to admin dashboard if admin
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const AdminDashboard()),
+          );
+        } else if (SessionService.isService) {
+          // Navigate to service dashboard if service
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder:
+                  (context) => const ServiceDashboard(
+                    serviceName: 'Service',
+                    serviceType: 'Service',
+                  ),
+            ),
+          );
+        } else {
+          // Unknown user type, redirect to login
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const LoginPage()),
+          );
+        }
+      });
+    }
+
+    // If we reach here, the session is valid - refresh data to sync
+    _refreshSessionData();
+  }
+
+  Future<void> _refreshSessionData() async {
+    // Refresh user data to ensure we have the latest information
+    try {
+      await SessionService.refreshUserData();
+      print('DEBUG: Session refreshed successfully');
+    } catch (e) {
+      print('DEBUG: Failed to refresh session: $e');
+      // If refresh fails, still keep the user logged in with cached data
     }
   }
 

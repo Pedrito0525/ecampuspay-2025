@@ -2912,6 +2912,273 @@ for all to authenticated using (true) with check (true);
     }
   }
 
+  // Analytics Operations
+
+  /// Get analytics data for performance dashboard
+  static Future<Map<String, dynamic>> getAnalyticsData({
+    DateTime? startDate,
+    DateTime? endDate,
+    String? serviceCategory,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      // Get date range (default to last 30 days if not provided)
+      final start =
+          startDate ?? DateTime.now().subtract(const Duration(days: 30));
+      final end = endDate ?? DateTime.now();
+
+      // Get service accounts with transaction counts and revenue
+      String serviceAccountsQuery = '''
+        id,
+        service_name,
+        service_category,
+        operational_type,
+        balance,
+        is_active,
+        created_at
+      ''';
+
+      var serviceAccountsResponse = await client
+          .from('service_accounts')
+          .select(serviceAccountsQuery)
+          .eq('is_active', true);
+
+      // Apply category filter if provided
+      if (serviceCategory != null && serviceCategory != 'all') {
+        serviceAccountsResponse =
+            serviceAccountsResponse
+                .where(
+                  (account) => account['service_category'] == serviceCategory,
+                )
+                .toList();
+      }
+
+      // Get transaction data for each service
+      List<Map<String, dynamic>> analyticsData = [];
+
+      for (var account in serviceAccountsResponse) {
+        // Get transaction count and total revenue for this service
+        final transactionsResponse = await client
+            .from('service_transactions')
+            .select('id, total_amount, created_at')
+            .eq('service_account_id', account['id'])
+            .gte('created_at', start.toIso8601String())
+            .lte('created_at', end.toIso8601String());
+
+        final transactionCount = transactionsResponse.length;
+        final totalRevenue = transactionsResponse.fold<double>(
+          0.0,
+          (sum, transaction) => sum + (transaction['total_amount'] ?? 0.0),
+        );
+
+        analyticsData.add({
+          'service_id': account['id'],
+          'service_name': account['service_name'],
+          'service_category': account['service_category'],
+          'operational_type': account['operational_type'],
+          'balance': account['balance'] ?? 0.0,
+          'transaction_count': transactionCount,
+          'total_revenue': totalRevenue,
+          'is_active': account['is_active'],
+          'created_at': account['created_at'],
+        });
+      }
+
+      // Calculate overall metrics
+      final totalTransactions = analyticsData.fold<int>(
+        0,
+        (sum, data) => sum + (data['transaction_count'] as int),
+      );
+      final totalRevenue = analyticsData.fold<double>(
+        0.0,
+        (sum, data) => sum + (data['total_revenue'] as double),
+      );
+      final activeServices =
+          analyticsData.where((data) => data['is_active'] == true).length;
+
+      return {
+        'success': true,
+        'data': {
+          'overall_metrics': {
+            'total_transactions': totalTransactions,
+            'total_revenue': totalRevenue,
+            'active_services': activeServices,
+          },
+          'service_data': analyticsData,
+          'date_range': {
+            'start': start.toIso8601String(),
+            'end': end.toIso8601String(),
+          },
+        },
+        'message': 'Analytics data retrieved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to get analytics data: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get top and lowest performing services
+  static Future<Map<String, dynamic>> getPerformanceRankings({
+    DateTime? startDate,
+    DateTime? endDate,
+    String? serviceCategory,
+    int limit = 5,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      final start =
+          startDate ?? DateTime.now().subtract(const Duration(days: 30));
+      final end = endDate ?? DateTime.now();
+
+      // Get service performance data
+      final analyticsResult = await getAnalyticsData(
+        startDate: start,
+        endDate: end,
+        serviceCategory: serviceCategory,
+      );
+
+      if (!analyticsResult['success']) {
+        return analyticsResult;
+      }
+
+      final serviceData = List<Map<String, dynamic>>.from(
+        analyticsResult['data']['service_data'],
+      );
+
+      // Sort by revenue to get top and lowest performers
+      serviceData.sort(
+        (a, b) => (b['total_revenue'] as double).compareTo(
+          a['total_revenue'] as double,
+        ),
+      );
+
+      final topPerformers = serviceData.take(limit).toList();
+      final lowestPerformers = serviceData.reversed.take(limit).toList();
+
+      return {
+        'success': true,
+        'data': {
+          'top_performers': topPerformers,
+          'lowest_performers': lowestPerformers,
+        },
+        'message': 'Performance rankings retrieved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to get performance rankings: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get revenue trends over time
+  static Future<Map<String, dynamic>> getRevenueTrends({
+    DateTime? startDate,
+    DateTime? endDate,
+    String? serviceCategory,
+    String period = 'day', // day, week, month
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      final start =
+          startDate ?? DateTime.now().subtract(const Duration(days: 30));
+      final end = endDate ?? DateTime.now();
+
+      // Get service accounts to filter by category
+      var serviceAccountsResponse = await client
+          .from('service_accounts')
+          .select('id, service_category')
+          .eq('is_active', true);
+
+      if (serviceCategory != null && serviceCategory != 'all') {
+        serviceAccountsResponse =
+            serviceAccountsResponse
+                .where(
+                  (account) => account['service_category'] == serviceCategory,
+                )
+                .toList();
+      }
+
+      final serviceIds =
+          serviceAccountsResponse.map((account) => account['id']).toList();
+
+      if (serviceIds.isEmpty) {
+        return {
+          'success': true,
+          'data': {'trends': []},
+          'message': 'No service accounts found for the selected category',
+        };
+      }
+
+      // Get transactions grouped by period
+      // Note: dateFormat variable is kept for future use with database date formatting functions
+
+      final trendsResponse = await client
+          .from('service_transactions')
+          .select('total_amount, created_at')
+          .inFilter('service_account_id', serviceIds)
+          .gte('created_at', start.toIso8601String())
+          .lte('created_at', end.toIso8601String())
+          .order('created_at');
+
+      // Group by period and calculate totals
+      Map<String, double> periodTotals = {};
+      for (var transaction in trendsResponse) {
+        final createdAt = DateTime.parse(transaction['created_at']);
+        String periodKey;
+
+        switch (period) {
+          case 'day':
+            periodKey =
+                '${createdAt.year}-${createdAt.month.toString().padLeft(2, '0')}-${createdAt.day.toString().padLeft(2, '0')}';
+            break;
+          case 'week':
+            periodKey = '${createdAt.year}-W${createdAt.day ~/ 7 + 1}';
+            break;
+          case 'month':
+            periodKey =
+                '${createdAt.year}-${createdAt.month.toString().padLeft(2, '0')}';
+            break;
+          default:
+            periodKey =
+                '${createdAt.year}-${createdAt.month.toString().padLeft(2, '0')}-${createdAt.day.toString().padLeft(2, '0')}';
+        }
+
+        periodTotals[periodKey] =
+            (periodTotals[periodKey] ?? 0.0) +
+            (transaction['total_amount'] ?? 0.0);
+      }
+
+      // Convert to list format for charts
+      List<Map<String, dynamic>> trends =
+          periodTotals.entries
+              .map((entry) => {'period': entry.key, 'revenue': entry.value})
+              .toList();
+
+      trends.sort((a, b) => a['period'].compareTo(b['period']));
+
+      return {
+        'success': true,
+        'data': {'trends': trends},
+        'message': 'Revenue trends retrieved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to get revenue trends: ${e.toString()}',
+      };
+    }
+  }
+
   /// Process user withdrawal
   /// If withdrawing to Admin: deduct user balance only (admin doesn't increase)
   /// If withdrawing to Service: deduct user balance and add to service balance

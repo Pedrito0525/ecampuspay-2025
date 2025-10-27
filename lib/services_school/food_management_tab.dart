@@ -65,7 +65,7 @@ class _FoodManagementTabState extends State<FoodManagementTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Inventory Management',
+                    'Service Item Manager',
                     style: TextStyle(
                       fontSize: isWeb ? 28 : (isTablet ? 24 : 22),
                       fontWeight: FontWeight.bold,

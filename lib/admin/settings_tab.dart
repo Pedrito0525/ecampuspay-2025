@@ -4,7 +4,9 @@ import 'api_configuration_screen.dart';
 import '../services/supabase_service.dart';
 
 class SettingsTab extends StatefulWidget {
-  const SettingsTab({super.key});
+  final int? initialFunction;
+
+  const SettingsTab({super.key, this.initialFunction});
 
   @override
   State<SettingsTab> createState() => _SettingsTabState();
@@ -16,6 +18,15 @@ class _SettingsTabState extends State<SettingsTab> {
   // General Settings state
   int _selectedFunction = -1;
   bool _isUpdating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Set initial function if provided
+    if (widget.initialFunction != null) {
+      _selectedFunction = widget.initialFunction!;
+    }
+  }
 
   // Form controllers for General Settings
   final TextEditingController _currentUsernameController =

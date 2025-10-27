@@ -50,6 +50,12 @@ class _VendorsTabState extends State<VendorsTab> {
   String? _selectedAdminId;
   String? _selectedAdminScannerId;
 
+  // Analytics state variables
+  Map<String, dynamic>? _analyticsData;
+  bool _isLoadingAnalytics = false;
+  String _selectedDateFilter = 'month';
+  String _selectedCategoryFilter = 'all';
+
   // Service categories
   final List<String> _serviceCategories = [
     'School Org',
@@ -159,25 +165,18 @@ class _VendorsTabState extends State<VendorsTab> {
                           index: 3,
                           icon: Icons.analytics,
                           title: 'Performance Analytics',
-                          description: 'View vendor sales and performance',
+                          description:
+                              'View comprehensive performance metrics and analytics',
                           color: Colors.purple,
                           onTap: () => setState(() => _selectedFunction = 3),
                         ),
                         _buildFunctionCard(
                           index: 4,
-                          icon: Icons.payment,
-                          title: 'Commission Management',
-                          description: 'Manage vendor commission rates',
-                          color: Colors.orange,
-                          onTap: () => setState(() => _selectedFunction = 4),
-                        ),
-                        _buildFunctionCard(
-                          index: 5,
                           icon: Icons.admin_panel_settings,
                           title: 'Admin Scanner Assignment',
                           description: 'Assign RFID scanners to admin accounts',
                           color: Colors.indigo,
-                          onTap: () => setState(() => _selectedFunction = 5),
+                          onTap: () => setState(() => _selectedFunction = 4),
                         ),
                       ],
                     );
@@ -198,10 +197,8 @@ class _VendorsTabState extends State<VendorsTab> {
       case 2:
         return _buildServiceAccountManagement();
       case 3:
-        return _buildCommissionManagement();
+        return _buildPerformanceAnalytics();
       case 4:
-        return _buildCommissionManagement();
-      case 5:
         return _buildAdminScannerAssignment();
       default:
         return Container();
@@ -1797,39 +1794,80 @@ class _VendorsTabState extends State<VendorsTab> {
     );
   }
 
-  Widget _buildCommissionManagement() {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              IconButton(
-                onPressed: () => setState(() => _selectedFunction = -1),
-                icon: const Icon(Icons.arrow_back, color: evsuRed),
-              ),
-              const Text(
-                'Commission Management',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 30),
+  Widget _buildPerformanceAnalytics() {
+    // Load analytics data when this function is first accessed
+    if (_analyticsData == null && !_isLoadingAnalytics) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadAnalyticsData();
+      });
+    }
 
-          // Commission management content
-          _buildCommissionContent(),
-        ],
+    return SingleChildScrollView(
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: MediaQuery.of(context).size.width > 600 ? 24.0 : 16.0,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header with back button
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () => setState(() => _selectedFunction = -1),
+                  icon: const Icon(Icons.arrow_back, color: evsuRed),
+                ),
+                Expanded(
+                  child: Text(
+                    'Performance Analytics',
+                    style: TextStyle(
+                      fontSize:
+                          MediaQuery.of(context).size.width > 600 ? 28 : 24,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Analytics content
+            _buildAnalyticsContent(),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildCommissionContent() {
+  Widget _buildAnalyticsContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Overall Performance Section
+        _buildOverallPerformanceSection(),
+        const SizedBox(height: 24),
+
+        // Filters Section
+        _buildFiltersSection(),
+        const SizedBox(height: 24),
+
+        // Top & Lowest Performers
+        _buildPerformersSection(),
+        const SizedBox(height: 24),
+
+        // Trends Section
+        _buildTrendsSection(),
+      ],
+    );
+  }
+
+  Widget _buildOverallPerformanceSection() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(isMobile ? 16.0 : 24.0),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -1841,10 +1879,1157 @@ class _VendorsTabState extends State<VendorsTab> {
           ),
         ],
       ),
-      child: const Text(
-        'Commission rate management and vendor payment settings would be displayed here.',
-        style: TextStyle(fontSize: 16, color: Colors.grey),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Overall Performance',
+                style: TextStyle(
+                  fontSize: isMobile ? 18 : 20,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+              const Spacer(),
+              if (_isLoadingAnalytics)
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                IconButton(
+                  onPressed: _loadAnalyticsData,
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh Data',
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Performance metrics grid
+          _isLoadingAnalytics
+              ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(40.0),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+              : _analyticsData == null
+              ? Center(
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.analytics_outlined,
+                      size: 48,
+                      color: Colors.grey.shade400,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'No data available',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ElevatedButton(
+                      onPressed: _loadAnalyticsData,
+                      child: const Text('Load Analytics Data'),
+                    ),
+                  ],
+                ),
+              )
+              : _buildResponsiveMetricsGrid(),
+        ],
       ),
+    );
+  }
+
+  Widget _buildFiltersSection() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 16.0 : 24.0),
+      constraints: const BoxConstraints(
+        minHeight: 120, // Ensure minimum height
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Filter Analytics',
+            style: TextStyle(
+              fontSize: isMobile ? 18 : 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Filter controls
+          _buildResponsiveFilters(),
+
+          // Debug: Add some spacing to ensure visibility
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResponsiveFilters() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    if (isMobile) {
+      return Column(
+        children: [
+          _buildDateFilter(),
+          const SizedBox(height: 16),
+          _buildCategoryFilter(),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(child: _buildDateFilter()),
+        const SizedBox(width: 16),
+        Expanded(child: _buildCategoryFilter()),
+      ],
+    );
+  }
+
+  Widget _buildDateFilter() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Time Period',
+          style: TextStyle(
+            fontSize: isMobile ? 12 : 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          height: isMobile ? 48 : 56, // Fixed height for consistency
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobile ? 8 : 12,
+            vertical: isMobile ? 4 : 8,
+          ),
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey[300]!),
+            borderRadius: BorderRadius.circular(8),
+            color: Colors.white,
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _selectedDateFilter,
+              hint: Text(
+                'Select period',
+                style: TextStyle(
+                  fontSize: isMobile ? 12 : 14,
+                  color: Colors.grey[600],
+                ),
+              ),
+              isExpanded: true,
+              style: TextStyle(
+                fontSize: isMobile ? 12 : 14,
+                color: Colors.black87,
+              ),
+              dropdownColor: Colors.white,
+              items: const [
+                DropdownMenuItem(
+                  value: 'day',
+                  child: Text('Today', style: TextStyle(color: Colors.black87)),
+                ),
+                DropdownMenuItem(
+                  value: 'week',
+                  child: Text(
+                    'This Week',
+                    style: TextStyle(color: Colors.black87),
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: 'month',
+                  child: Text(
+                    'This Month',
+                    style: TextStyle(color: Colors.black87),
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: 'year',
+                  child: Text(
+                    'This Year',
+                    style: TextStyle(color: Colors.black87),
+                  ),
+                ),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() {
+                    _selectedDateFilter = value;
+                  });
+                  _loadAnalyticsData();
+                }
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCategoryFilter() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Service Type',
+          style: TextStyle(
+            fontSize: isMobile ? 12 : 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          height: isMobile ? 48 : 56, // Fixed height for consistency
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobile ? 8 : 12,
+            vertical: isMobile ? 4 : 8,
+          ),
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey[300]!),
+            borderRadius: BorderRadius.circular(8),
+            color: Colors.white,
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _selectedCategoryFilter,
+              hint: Text(
+                'All Categories',
+                style: TextStyle(
+                  fontSize: isMobile ? 12 : 14,
+                  color: Colors.grey[600],
+                ),
+              ),
+              isExpanded: true,
+              style: TextStyle(
+                fontSize: isMobile ? 12 : 14,
+                color: Colors.black87,
+              ),
+              dropdownColor: Colors.white,
+              items: const [
+                DropdownMenuItem(
+                  value: 'all',
+                  child: Text(
+                    'All Categories',
+                    style: TextStyle(color: Colors.black87),
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: 'Vendor',
+                  child: Text(
+                    'Vendors',
+                    style: TextStyle(color: Colors.black87),
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: 'School Org',
+                  child: Text(
+                    'School Organizations',
+                    style: TextStyle(color: Colors.black87),
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: 'Campus Service Units',
+                  child: Text(
+                    'Campus Service Units',
+                    style: TextStyle(color: Colors.black87),
+                  ),
+                ),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() {
+                    _selectedCategoryFilter = value;
+                  });
+                  _loadAnalyticsData();
+                }
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPerformersSection() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 16.0 : 24.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Top & Lowest Performers',
+            style: TextStyle(
+              fontSize: isMobile ? 18 : 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          _buildResponsivePerformersLayout(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResponsivePerformersLayout() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final isTablet = screenWidth >= 600 && screenWidth < 1024;
+
+    if (isMobile) {
+      return Column(
+        children: [
+          _buildTopPerformers(),
+          const SizedBox(height: 16),
+          _buildLowestPerformers(),
+        ],
+      );
+    }
+
+    if (isTablet) {
+      return Column(
+        children: [
+          Row(
+            children: [
+              Expanded(child: _buildTopPerformers()),
+              const SizedBox(width: 12),
+              Expanded(child: _buildLowestPerformers()),
+            ],
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: _buildTopPerformers()),
+        const SizedBox(width: 16),
+        Expanded(child: _buildLowestPerformers()),
+      ],
+    );
+  }
+
+  Widget _buildTopPerformers() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Top 5 Performers',
+          style: TextStyle(
+            fontSize: isMobile ? 14 : 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.green,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _isLoadingAnalytics
+            ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(20.0),
+                child: CircularProgressIndicator(),
+              ),
+            )
+            : _analyticsData == null
+            ? const Center(
+              child: Text(
+                'No data available',
+                style: TextStyle(color: Colors.grey),
+              ),
+            )
+            : _buildPerformersList(true),
+      ],
+    );
+  }
+
+  Widget _buildLowestPerformers() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Lowest Performers',
+          style: TextStyle(
+            fontSize: isMobile ? 14 : 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.orange,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _isLoadingAnalytics
+            ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(20.0),
+                child: CircularProgressIndicator(),
+              ),
+            )
+            : _analyticsData == null
+            ? const Center(
+              child: Text(
+                'No data available',
+                style: TextStyle(color: Colors.grey),
+              ),
+            )
+            : _buildPerformersList(false),
+      ],
+    );
+  }
+
+  Widget _buildPerformerItem({
+    required String name,
+    required String revenue,
+    required String transactions,
+    required bool isTop,
+  }) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.all(isMobile ? 10 : 12),
+      decoration: BoxDecoration(
+        color: isTop ? Colors.green.shade50 : Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isTop ? Colors.green.shade200 : Colors.orange.shade200,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isTop ? Icons.trending_up : Icons.trending_down,
+            color: isTop ? Colors.green : Colors.orange,
+            size: isMobile ? 18 : 20,
+          ),
+          SizedBox(width: isMobile ? 8 : 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: isMobile ? 12 : 14,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$revenue • $transactions transactions',
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: isMobile ? 10 : 12,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrendsSection() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 16.0 : 24.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Performance Trends',
+            style: TextStyle(
+              fontSize: isMobile ? 18 : 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Trends data display
+          _isLoadingAnalytics
+              ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(40.0),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+              : _analyticsData == null
+              ? _buildNoDataTrends()
+              : _buildTrendsData(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoDataTrends() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    return Container(
+      height: 300,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.analytics_outlined,
+              size: 48,
+              color: Colors.grey.shade400,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'No Trends Data Available',
+              style: TextStyle(
+                fontSize: isMobile ? 16 : 18,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Load analytics data to view trends',
+              style: TextStyle(
+                fontSize: isMobile ? 12 : 14,
+                color: Colors.grey.shade500,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _loadAnalyticsData,
+              child: const Text('Load Data'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrendsData() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final serviceData = List<Map<String, dynamic>>.from(
+      _analyticsData!['service_data'],
+    );
+
+    // Calculate trend data
+    final totalRevenue = serviceData.fold<double>(
+      0.0,
+      (sum, data) => sum + (data['total_revenue'] as double),
+    );
+    final totalTransactions = serviceData.fold<int>(
+      0,
+      (sum, data) => sum + (data['transaction_count'] as int),
+    );
+    final activeServices =
+        serviceData.where((data) => data['is_active'] == true).length;
+
+    return Column(
+      children: [
+        // Summary cards
+        _buildTrendsSummaryCards(
+          totalRevenue,
+          totalTransactions,
+          activeServices,
+          isMobile,
+        ),
+        const SizedBox(height: 20),
+
+        // Simple bar chart representation
+        _buildSimpleTrendsChart(serviceData, isMobile),
+      ],
+    );
+  }
+
+  Widget _buildTrendsSummaryCards(
+    double totalRevenue,
+    int totalTransactions,
+    int activeServices,
+    bool isMobile,
+  ) {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildTrendCard(
+            title: 'Total Revenue',
+            value: '₱${totalRevenue.toStringAsFixed(2)}',
+            icon: Icons.attach_money,
+            color: Colors.green,
+            isMobile: isMobile,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildTrendCard(
+            title: 'Transactions',
+            value: totalTransactions.toString(),
+            icon: Icons.receipt_long,
+            color: Colors.blue,
+            isMobile: isMobile,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildTrendCard(
+            title: 'Active Services',
+            value: activeServices.toString(),
+            icon: Icons.business_center,
+            color: Colors.purple,
+            isMobile: isMobile,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTrendCard({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color color,
+    required bool isMobile,
+  }) {
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: isMobile ? 20 : 24),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: isMobile ? 16 : 18,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: isMobile ? 10 : 12,
+              color: color.withOpacity(0.8),
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSimpleTrendsChart(
+    List<Map<String, dynamic>> serviceData,
+    bool isMobile,
+  ) {
+    // Sort services by revenue for chart
+    serviceData.sort(
+      (a, b) => (b['total_revenue'] as double).compareTo(
+        a['total_revenue'] as double,
+      ),
+    );
+
+    // Take top 5 services for chart
+    final topServices = serviceData.take(5).toList();
+
+    if (topServices.isEmpty) {
+      return Container(
+        height: 200,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Center(
+          child: Text(
+            'No service data available for trends',
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontSize: isMobile ? 14 : 16,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      height: 250,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Top 5 Services by Revenue',
+            style: TextStyle(
+              fontSize: isMobile ? 14 : 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: ListView.builder(
+              itemCount: topServices.length,
+              itemBuilder: (context, index) {
+                final service = topServices[index];
+                final revenue = service['total_revenue'] as double;
+                final maxRevenue = topServices.first['total_revenue'] as double;
+                final percentage =
+                    maxRevenue > 0 ? (revenue / maxRevenue) : 0.0;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              service['service_name'] ?? 'Unknown Service',
+                              style: TextStyle(
+                                fontSize: isMobile ? 12 : 14,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black87,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Text(
+                            '₱${revenue.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: isMobile ? 11 : 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.green.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Container(
+                        height: 8,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(4),
+                          color: Colors.grey.shade200,
+                        ),
+                        child: FractionallySizedBox(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: percentage,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(4),
+                              gradient: LinearGradient(
+                                colors: [
+                                  Colors.blue.shade400,
+                                  Colors.blue.shade600,
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResponsiveMetricsGrid() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final isTablet = screenWidth >= 600 && screenWidth < 1024;
+
+    final metrics = _analyticsData!['overall_metrics'];
+
+    // For very small screens, use single column
+    if (screenWidth < 400) {
+      return Column(
+        children: [
+          _buildMetricCard(
+            title: 'Total Transactions',
+            value: metrics['total_transactions'].toString(),
+            icon: Icons.receipt_long,
+            color: Colors.blue,
+            trend: '+12.5%',
+            trendUp: true,
+            isCompact: true,
+          ),
+          const SizedBox(height: 12),
+          _buildMetricCard(
+            title: 'Total Revenue',
+            value: '₱${metrics['total_revenue'].toStringAsFixed(2)}',
+            icon: Icons.attach_money,
+            color: Colors.green,
+            trend: '+8.3%',
+            trendUp: true,
+            isCompact: true,
+          ),
+          const SizedBox(height: 12),
+          _buildMetricCard(
+            title: 'Active Services',
+            value: metrics['active_services'].toString(),
+            icon: Icons.business_center,
+            color: Colors.purple,
+            trend: '+2',
+            trendUp: true,
+            isCompact: true,
+          ),
+        ],
+      );
+    }
+
+    // For mobile screens, use 2 columns
+    if (isMobile) {
+      return Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _buildMetricCard(
+                  title: 'Total Transactions',
+                  value: metrics['total_transactions'].toString(),
+                  icon: Icons.receipt_long,
+                  color: Colors.blue,
+                  trend: '+12.5%',
+                  trendUp: true,
+                  isCompact: true,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildMetricCard(
+                  title: 'Total Revenue',
+                  value: '₱${metrics['total_revenue'].toStringAsFixed(2)}',
+                  icon: Icons.attach_money,
+                  color: Colors.green,
+                  trend: '+8.3%',
+                  trendUp: true,
+                  isCompact: true,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildMetricCard(
+            title: 'Active Services',
+            value: metrics['active_services'].toString(),
+            icon: Icons.business_center,
+            color: Colors.purple,
+            trend: '+2',
+            trendUp: true,
+            isCompact: true,
+          ),
+        ],
+      );
+    }
+
+    // For tablet and desktop, use 3 columns
+    return Row(
+      children: [
+        Expanded(
+          child: _buildMetricCard(
+            title: 'Total Transactions',
+            value: metrics['total_transactions'].toString(),
+            icon: Icons.receipt_long,
+            color: Colors.blue,
+            trend: '+12.5%',
+            trendUp: true,
+            isCompact: isTablet,
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: _buildMetricCard(
+            title: 'Total Revenue',
+            value: '₱${metrics['total_revenue'].toStringAsFixed(2)}',
+            icon: Icons.attach_money,
+            color: Colors.green,
+            trend: '+8.3%',
+            trendUp: true,
+            isCompact: isTablet,
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: _buildMetricCard(
+            title: 'Active Services',
+            value: metrics['active_services'].toString(),
+            icon: Icons.business_center,
+            color: Colors.purple,
+            trend: '+2',
+            trendUp: true,
+            isCompact: isTablet,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMetricCard({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color color,
+    required String trend,
+    required bool trendUp,
+    bool isCompact = false,
+  }) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isVerySmall = screenWidth < 400;
+
+    return Container(
+      padding: EdgeInsets.all(isCompact ? 12 : 16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: isCompact ? 18 : 20),
+              const Spacer(),
+              Flexible(
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isCompact ? 4 : 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: trendUp ? Colors.green : Colors.red,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    trend,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: isCompact ? 9 : 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: isCompact ? 6 : 8),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: isCompact ? (isVerySmall ? 18 : 20) : 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: isCompact ? 11 : 12,
+              color: color.withOpacity(0.8),
+            ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Analytics data loading methods
+  Future<void> _loadAnalyticsData() async {
+    setState(() {
+      _isLoadingAnalytics = true;
+    });
+
+    try {
+      // Calculate date range based on selected filter
+      DateTime startDate;
+      DateTime endDate = DateTime.now();
+
+      switch (_selectedDateFilter) {
+        case 'day':
+          startDate = DateTime.now().subtract(const Duration(days: 1));
+          break;
+        case 'week':
+          startDate = DateTime.now().subtract(const Duration(days: 7));
+          break;
+        case 'month':
+          startDate = DateTime.now().subtract(const Duration(days: 30));
+          break;
+        case 'year':
+          startDate = DateTime.now().subtract(const Duration(days: 365));
+          break;
+        default:
+          startDate = DateTime.now().subtract(const Duration(days: 30));
+      }
+
+      // Get analytics data
+      final result = await SupabaseService.getAnalyticsData(
+        startDate: startDate,
+        endDate: endDate,
+        serviceCategory:
+            _selectedCategoryFilter == 'all' ? null : _selectedCategoryFilter,
+      );
+
+      if (result['success']) {
+        setState(() {
+          _analyticsData = result['data'];
+        });
+      } else {
+        _showErrorDialog('Failed to load analytics data: ${result['message']}');
+      }
+    } catch (e) {
+      _showErrorDialog('Error loading analytics data: $e');
+    } finally {
+      setState(() {
+        _isLoadingAnalytics = false;
+      });
+    }
+  }
+
+  Widget _buildPerformersList(bool isTop) {
+    if (_analyticsData == null) return const SizedBox.shrink();
+
+    final serviceData = List<Map<String, dynamic>>.from(
+      _analyticsData!['service_data'],
+    );
+
+    // Sort by revenue
+    serviceData.sort(
+      (a, b) => (b['total_revenue'] as double).compareTo(
+        a['total_revenue'] as double,
+      ),
+    );
+
+    // Get top or lowest performers
+    final performers =
+        isTop
+            ? serviceData.take(5).toList()
+            : serviceData.reversed.take(3).toList();
+
+    if (performers.isEmpty) {
+      return const Center(
+        child: Text('No data available', style: TextStyle(color: Colors.grey)),
+      );
+    }
+
+    return Column(
+      children:
+          performers
+              .map(
+                (performer) => _buildPerformerItem(
+                  name: performer['service_name'] ?? 'Unknown Service',
+                  revenue:
+                      '₱${(performer['total_revenue'] as double).toStringAsFixed(2)}',
+                  transactions: performer['transaction_count'].toString(),
+                  isTop: isTop,
+                ),
+              )
+              .toList(),
     );
   }
 

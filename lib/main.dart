@@ -28,6 +28,8 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
+
   @override
   void initState() {
     super.initState();
@@ -46,47 +48,34 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
 
-    // Clear session when app is paused, detached, or hidden
-    // This ensures session is cleared when app is closed/backgrounded
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached ||
-        state == AppLifecycleState.hidden) {
-      print('DEBUG: App lifecycle changed to $state - clearing session');
-      _clearSessionOnAppClose();
+    print(
+      'DEBUG: App lifecycle state changed from $_appLifecycleState to $state',
+    );
+
+    // Only clear session when app is terminated or force-closed
+    // DO NOT clear session when app is paused, hidden, or detached
+    // This allows the user to resume the app from background
+    if (state == AppLifecycleState.detached) {
+      print(
+        'DEBUG: App detached (force closed) - session will be cleared on next open',
+      );
+      // Don't clear session here - let the login page check if it's valid
     }
+
+    _appLifecycleState = state;
   }
 
-  /// Clear session when app closes or goes to background
-  Future<void> _clearSessionOnAppClose() async {
-    try {
-      // Only clear session if user is actually logged in
-      if (SessionService.isLoggedIn) {
-        print('DEBUG: User is logged in, clearing session due to app close');
-        await SessionService.clearSessionOnAppClose();
-      } else {
-        print('DEBUG: No active session to clear');
-      }
-    } catch (e) {
-      print('DEBUG: Error clearing session on app close: $e');
-    }
-  }
-
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Ecampuspay',
+      title: 'eCampusPay',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFB01212)),
+        primarySwatch: Colors.red,
+        textTheme: GoogleFonts.interTextTheme(),
         useMaterial3: true,
-        textTheme: GoogleFonts.poppinsTextTheme(),
-        // Add responsive design support
-        visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
       home: const SplashScreen(),
-      debugShowCheckedModeBanner: false,
     );
   }
 }
-
-// Removed the default counter page; app now starts at LoginPage.

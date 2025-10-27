@@ -7,6 +7,7 @@ import 'dart:convert';
 import '../services/supabase_service.dart';
 import '../services/encryption_service.dart';
 import '../services/session_service.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 class PaymentScreen extends StatefulWidget {
   final Map<String, dynamic> product;
@@ -42,6 +43,7 @@ class _PaymentScreenState extends State<PaymentScreen>
   // Map-based stream not used here; using account service string stream
   String? transactionId;
   DateTime? transactionTime;
+  AudioPlayer _audioPlayer = AudioPlayer();
 
   @override
   void initState() {
@@ -67,6 +69,7 @@ class _PaymentScreenState extends State<PaymentScreen>
   void dispose() {
     _animationController.dispose();
     _rfidDataSubscription?.cancel();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
@@ -364,6 +367,9 @@ class _PaymentScreenState extends State<PaymentScreen>
         paymentZoneColor = const Color(0xFF28A745);
       });
 
+      // Play success sound
+      await _playSuccessSound();
+
       // Update SessionService with new service account balance if available
       if (paymentResult['new_service_balance'] != null) {
         final newServiceBalance =
@@ -382,6 +388,14 @@ class _PaymentScreenState extends State<PaymentScreen>
         paymentZoneColor = Colors.red;
       });
       _showDialog('Payment Failed', 'An error occurred: $e');
+    }
+  }
+
+  Future<void> _playSuccessSound() async {
+    try {
+      await _audioPlayer.play(AssetSource('applepay.mp3'));
+    } catch (e) {
+      print('Error playing success sound: $e');
     }
   }
 

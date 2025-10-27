@@ -9,6 +9,9 @@ import 'settings_tab.dart';
 import 'loaning_tab.dart';
 import 'feedback_tab.dart';
 import '../login_page.dart';
+import '../services/session_service.dart';
+import '../user/user_dashboard.dart';
+import '../services_school/service_dashboard.dart';
 
 class AdminDashboard extends StatefulWidget {
   final int? initialTabIndex;
@@ -32,6 +35,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   late final List<Widget> _tabs;
+  int? _settingsInitialFunction;
 
   final List<NavigationItem> _navigationItems = [
     NavigationItem(
@@ -96,6 +100,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   @override
   void initState() {
     super.initState();
+    _checkSession();
 
     // Set initial tab index if provided
     if (widget.initialTabIndex != null) {
@@ -107,7 +112,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
       const ReportsTab(), // 1 - Reports (Main)
       const TransactionsTab(), // 2 - Transactions (Main)
       const TopUpTab(), // 3 - Top-Up (Main)
-      const SettingsTab(), // 4 - Settings (Bottom nav profile replacement)
+      SettingsTab(
+        initialFunction: _settingsInitialFunction,
+      ), // 4 - Settings (Bottom nav profile replacement)
       const UserManagementTab(), // 5 - User Management (Management)
       VendorsTab(
         navigateToServiceRegistration: widget.navigateToServiceRegistration,
@@ -117,6 +124,50 @@ class _AdminDashboardState extends State<AdminDashboard> {
     ];
   }
 
+  void _checkSession() {
+    // Check if session exists and is valid
+    if (!SessionService.isLoggedIn) {
+      // Redirect to login if not logged in
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const LoginPage()),
+        );
+      });
+      return;
+    }
+
+    // If logged in but not an admin, redirect based on user type
+    if (!SessionService.isAdmin) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (SessionService.isStudent) {
+          // Navigate to user dashboard if student
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const UserDashboard()),
+          );
+        } else if (SessionService.isService) {
+          // Navigate to service dashboard if service
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder:
+                  (context) => const ServiceDashboard(
+                    serviceName: 'Service',
+                    serviceType: 'Service',
+                  ),
+            ),
+          );
+        } else {
+          // Unknown user type, redirect to login
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const LoginPage()),
+          );
+        }
+      });
+    }
+
+    // If we reach here, the session is valid
+    print('DEBUG: Admin session is valid');
+  }
+
   // Method to change tab index from child widgets
   void changeTabIndex(int index) {
     if (index >= 0 && index < _tabs.length) {
@@ -124,6 +175,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
         _currentIndex = index;
       });
     }
+  }
+
+  // Method to navigate to settings with specific function
+  void navigateToSettingsWithFunction(int functionIndex) {
+    setState(() {
+      _settingsInitialFunction = functionIndex;
+      _currentIndex = 4; // Settings tab index
+    });
+    // Rebuild the tabs with the new initial function
+    _tabs[4] = SettingsTab(initialFunction: _settingsInitialFunction);
   }
 
   @override
@@ -407,41 +468,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
               ),
             ),
             const Spacer(),
-            // Notifications
-            Stack(
-              children: [
-                IconButton(
-                  onPressed: () {},
-                  icon: const Icon(
-                    Icons.notifications_outlined,
-                    color: Colors.white,
-                  ),
-                ),
-                Positioned(
-                  right: 8,
-                  top: 8,
-                  child: Container(
-                    width: 16,
-                    height: 16,
-                    decoration: const BoxDecoration(
-                      color: Colors.red,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Center(
-                      child: Text(
-                        '5',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(width: 20),
             // Admin Info
             const Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -489,39 +515,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
         ),
       ),
       actions: [
-        Stack(
-          children: [
-            IconButton(
-              onPressed: () {},
-              icon: const Icon(
-                Icons.notifications_outlined,
-                color: Colors.white,
-              ),
-            ),
-            Positioned(
-              right: 8,
-              top: 8,
-              child: Container(
-                width: 16,
-                height: 16,
-                decoration: const BoxDecoration(
-                  color: Colors.red,
-                  shape: BoxShape.circle,
-                ),
-                child: const Center(
-                  child: Text(
-                    '5',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
         IconButton(
           onPressed: _showQuickActions,
           icon: const Icon(Icons.account_circle, color: Colors.white),
@@ -661,7 +654,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     const Padding(
                       padding: EdgeInsets.all(20),
                       child: Text(
-                        'Emergency Actions',
+                        'Profile',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -675,30 +668,23 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             _buildActionButton(
-                              icon: Icons.lock,
-                              iconColor: Colors.red,
-                              title: 'Lock All Transactions',
-                              onTap: () {
-                                Navigator.pop(context);
-                                _showConfirmDialog('Lock all transactions?');
-                              },
-                            ),
-                            _buildActionButton(
-                              icon: Icons.notification_important,
-                              iconColor: Colors.orange,
-                              title: 'Send System Alert',
-                              onTap: () {
-                                Navigator.pop(context);
-                                _showAlertDialog();
-                              },
-                            ),
-                            _buildActionButton(
-                              icon: Icons.support_agent,
+                              icon: Icons.person,
                               iconColor: evsuRed,
-                              title: 'Contact Support',
+                              title: 'Admin Profile',
                               onTap: () {
                                 Navigator.pop(context);
-                                // Handle contact support
+                                navigateToSettingsWithFunction(
+                                  0,
+                                ); // Navigate to General Settings
+                              },
+                            ),
+                            _buildActionButton(
+                              icon: Icons.settings,
+                              iconColor: Colors.grey[600]!,
+                              title: 'Settings',
+                              onTap: () {
+                                Navigator.pop(context);
+                                changeTabIndex(4); // Navigate to Settings tab
                               },
                             ),
                             _buildActionButton(
@@ -751,7 +737,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   const Padding(
                     padding: EdgeInsets.all(20),
                     child: Text(
-                      'Emergency Actions',
+                      'Profile',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -760,30 +746,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     ),
                   ),
                   ListTile(
-                    leading: const Icon(Icons.lock, color: Colors.red),
-                    title: const Text('Lock All Transactions'),
+                    leading: const Icon(Icons.person, color: evsuRed),
+                    title: const Text('Admin Profile'),
                     onTap: () {
                       Navigator.pop(context);
-                      _showConfirmDialog('Lock all transactions?');
+                      navigateToSettingsWithFunction(
+                        0,
+                      ); // Navigate to General Settings
                     },
                   ),
                   ListTile(
-                    leading: const Icon(
-                      Icons.notification_important,
-                      color: Colors.orange,
-                    ),
-                    title: const Text('Send System Alert'),
+                    leading: const Icon(Icons.settings, color: Colors.grey),
+                    title: const Text('Settings'),
                     onTap: () {
                       Navigator.pop(context);
-                      _showAlertDialog();
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.support_agent, color: evsuRed),
-                    title: const Text('Contact Support'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      // Handle contact support
+                      changeTabIndex(4); // Navigate to Settings tab
                     },
                   ),
                   ListTile(
@@ -853,77 +830,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
         ),
       ),
-    );
-  }
-
-  void _showConfirmDialog(String message) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Confirm Action'),
-            content: Text(message),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
-                onPressed: () {
-                  Navigator.pop(context);
-                  // Handle emergency action
-                },
-                child: const Text(
-                  'Confirm',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-            ],
-          ),
-    );
-  }
-
-  void _showAlertDialog() {
-    final TextEditingController alertController = TextEditingController();
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Send System Alert'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('Enter alert message:'),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: alertController,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    hintText: 'Alert message...',
-                  ),
-                  maxLines: 3,
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
-                onPressed: () {
-                  Navigator.pop(context);
-                  // Handle send alert
-                },
-                child: const Text(
-                  'Send Alert',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ),
-            ],
-          ),
     );
   }
 

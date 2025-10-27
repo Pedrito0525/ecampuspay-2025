@@ -530,12 +530,6 @@ class _HomeTabState extends State<HomeTab> {
       final operationalType =
           SessionService.currentUserData?['operational_type']?.toString() ??
           'Main';
-      final mainServiceIdStr =
-          SessionService.currentUserData?['main_service_id']?.toString();
-      final rootMainId =
-          operationalType == 'Sub'
-              ? (int.tryParse(mainServiceIdStr ?? '') ?? serviceId)
-              : serviceId;
 
       final List<Map<String, dynamic>> activities = [];
 
@@ -544,19 +538,23 @@ class _HomeTabState extends State<HomeTab> {
         final topUpTransactions = await SupabaseService.client
             .from('top_up_transactions')
             .select(
-              'id, student_id, amount, created_at, processed_by, transaction_type',
+              'id, student_id, amount, created_at, processed_by, transaction_type, service_accounts!top_up_transactions_processed_by_fkey(service_name)',
             )
             .eq('processed_by', SessionService.currentUserName)
             .order('created_at', ascending: false)
             .limit(10);
 
         for (final transaction in topUpTransactions) {
+          final serviceName =
+              (transaction['service_accounts']?['service_name']?.toString()) ??
+              (transaction['processed_by']?.toString() ?? 'Unknown Service');
+
           activities.add({
             'id': transaction['id'],
             'type': 'top_up',
             'title': 'Student Top-up',
             'subtitle':
-                'Topped up ₱${(transaction['amount'] as num).toStringAsFixed(2)} to student ${transaction['student_id']}',
+                'Topped up ₱${(transaction['amount'] as num).toStringAsFixed(2)} to student ${transaction['student_id']} • Processed by: $serviceName',
             'amount': transaction['amount'],
             'created_at': transaction['created_at'],
             'icon': Icons.person_add,
@@ -571,9 +569,13 @@ class _HomeTabState extends State<HomeTab> {
       try {
         final serviceTransactions = await SupabaseService.client
             .from('service_transactions')
-            .select('id, student_id, total_amount, created_at, items')
+            .select(
+              'id, student_id, total_amount, created_at, items, service_account_id, service_accounts!service_transactions_service_account_id_fkey(service_name)',
+            )
             .or(
-              'main_service_id.eq.${rootMainId},service_account_id.eq.${rootMainId}',
+              operationalType == 'Main'
+                  ? 'main_service_id.eq.${serviceId},service_account_id.eq.${serviceId}'
+                  : 'service_account_id.eq.${serviceId}',
             )
             .order('created_at', ascending: false)
             .limit(10);
@@ -582,13 +584,23 @@ class _HomeTabState extends State<HomeTab> {
           final items = transaction['items'] as List?;
           final firstItem = items?.isNotEmpty == true ? items!.first : null;
           final itemName = firstItem?['name']?.toString() ?? 'Service Payment';
+          final serviceName =
+              (transaction['service_accounts']?['service_name']?.toString()) ??
+              'Unknown Service';
+
+          // Debug: Print transaction data to understand the structure
+          print('DEBUG: Transaction data: ${transaction.toString()}');
+          print(
+            'DEBUG: Service accounts data: ${transaction['service_accounts']}',
+          );
+          print('DEBUG: Service name extracted: $serviceName');
 
           activities.add({
             'id': transaction['id'],
             'type': 'payment',
             'title': 'Payment Received',
             'subtitle':
-                '₱${(transaction['total_amount'] as num).toStringAsFixed(2)} for $itemName from student ${transaction['student_id']}',
+                '₱${(transaction['total_amount'] as num).toStringAsFixed(2)} for $itemName from student ${transaction['student_id']} • Service: $serviceName',
             'amount': transaction['total_amount'],
             'created_at': transaction['created_at'],
             'icon': Icons.payment,
@@ -1254,12 +1266,6 @@ class _HomeTabState extends State<HomeTab> {
       final operationalType =
           SessionService.currentUserData?['operational_type']?.toString() ??
           'Main';
-      final mainServiceIdStr =
-          SessionService.currentUserData?['main_service_id']?.toString();
-      final rootMainId =
-          operationalType == 'Sub'
-              ? (int.tryParse(mainServiceIdStr ?? '') ?? serviceId)
-              : serviceId;
 
       final List<Map<String, dynamic>> activities = [];
 
@@ -1268,19 +1274,23 @@ class _HomeTabState extends State<HomeTab> {
         final topUpTransactions = await SupabaseService.client
             .from('top_up_transactions')
             .select(
-              'id, student_id, amount, created_at, processed_by, transaction_type',
+              'id, student_id, amount, created_at, processed_by, transaction_type, service_accounts!top_up_transactions_processed_by_fkey(service_name)',
             )
             .eq('processed_by', SessionService.currentUserName)
             .order('created_at', ascending: false)
             .limit(50); // Load more for history modal
 
         for (final transaction in topUpTransactions) {
+          final serviceName =
+              (transaction['service_accounts']?['service_name']?.toString()) ??
+              (transaction['processed_by']?.toString() ?? 'Unknown Service');
+
           activities.add({
             'id': transaction['id'],
             'type': 'top_up',
             'title': 'Student Top-up',
             'subtitle':
-                'Topped up ₱${(transaction['amount'] as num).toStringAsFixed(2)} to student ${transaction['student_id']}',
+                'Topped up ₱${(transaction['amount'] as num).toStringAsFixed(2)} to student ${transaction['student_id']} • Processed by: $serviceName',
             'amount': transaction['amount'],
             'created_at': transaction['created_at'],
             'icon': Icons.person_add,
@@ -1297,24 +1307,38 @@ class _HomeTabState extends State<HomeTab> {
       try {
         final serviceTransactions = await SupabaseService.client
             .from('service_transactions')
-            .select('id, student_id, total_amount, created_at, items')
+            .select(
+              'id, student_id, total_amount, created_at, items, service_account_id, service_accounts!service_transactions_service_account_id_fkey(service_name)',
+            )
             .or(
-              'main_service_id.eq.${rootMainId},service_account_id.eq.${rootMainId}',
+              operationalType == 'Main'
+                  ? 'main_service_id.eq.${serviceId},service_account_id.eq.${serviceId}'
+                  : 'service_account_id.eq.${serviceId}',
             )
             .order('created_at', ascending: false)
-            .limit(50); // Load more for history modal
+            .limit(50);
 
         for (final transaction in serviceTransactions) {
           final items = transaction['items'] as List?;
           final firstItem = items?.isNotEmpty == true ? items!.first : null;
           final itemName = firstItem?['name']?.toString() ?? 'Service Payment';
+          final serviceName =
+              (transaction['service_accounts']?['service_name']?.toString()) ??
+              'Unknown Service';
+
+          // Debug: Print transaction data to understand the structure
+          print('DEBUG History: Transaction data: ${transaction.toString()}');
+          print(
+            'DEBUG History: Service accounts data: ${transaction['service_accounts']}',
+          );
+          print('DEBUG History: Service name extracted: $serviceName');
 
           activities.add({
             'id': transaction['id'],
             'type': 'payment',
             'title': 'Payment Received',
             'subtitle':
-                '₱${(transaction['total_amount'] as num).toStringAsFixed(2)} for $itemName from student ${transaction['student_id']}',
+                '₱${(transaction['total_amount'] as num).toStringAsFixed(2)} for $itemName from student ${transaction['student_id']} • Service: $serviceName',
             'amount': transaction['total_amount'],
             'created_at': transaction['created_at'],
             'icon': Icons.payment,
@@ -1957,13 +1981,24 @@ class _HomeTabState extends State<HomeTab> {
       switch (transactionType) {
         case 'payment':
           {
-            // Fetch service transaction details
+            // Fetch service transaction details with service name
             final result =
                 await SupabaseService.client
                     .from('service_transactions')
-                    .select('*')
+                    .select(
+                      '*, service_accounts!service_transactions_service_account_id_fkey(service_name)',
+                    )
                     .eq('id', transactionId)
                     .single();
+
+            // Add service name to result
+            if (result['service_accounts'] != null) {
+              result['service_name'] =
+                  result['service_accounts']['service_name']?.toString() ??
+                  'Unknown Service';
+            } else {
+              result['service_name'] = 'Unknown Service';
+            }
 
             // Attempt to fetch and decrypt student name
             try {
@@ -1994,13 +2029,25 @@ class _HomeTabState extends State<HomeTab> {
 
         case 'top_up':
           {
-            // Fetch top-up transaction details
+            // Fetch top-up transaction details with service name
             final result =
                 await SupabaseService.client
                     .from('top_up_transactions')
-                    .select('*')
+                    .select(
+                      '*, service_accounts!top_up_transactions_processed_by_fkey(service_name)',
+                    )
                     .eq('id', transactionId)
                     .single();
+
+            // Add service name to result
+            if (result['service_accounts'] != null) {
+              result['service_name'] =
+                  result['service_accounts']['service_name']?.toString() ??
+                  'Unknown Service';
+            } else {
+              result['service_name'] =
+                  result['processed_by']?.toString() ?? 'Unknown Service';
+            }
 
             // Attempt to fetch and decrypt student name
             try {
@@ -2142,6 +2189,11 @@ class _HomeTabState extends State<HomeTab> {
             _buildReceiptRow('Processed By', data['processed_by'].toString()),
           );
         }
+        if (data['service_name'] != null) {
+          details.add(
+            _buildReceiptRow('Service Name', data['service_name'].toString()),
+          );
+        }
         break;
 
       case 'service_payment':
@@ -2163,6 +2215,13 @@ class _HomeTabState extends State<HomeTab> {
             '₱${_safeParseNumber(data['total_amount']).toStringAsFixed(2)}',
           ),
         );
+
+        // Add service name
+        if (data['service_name'] != null) {
+          details.add(
+            _buildReceiptRow('Service Name', data['service_name'].toString()),
+          );
+        }
 
         // Display purchased items from service_transactions.items
         final dynamic rawItems = data['items'];
