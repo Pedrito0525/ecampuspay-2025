@@ -650,6 +650,107 @@ for all to authenticated using (true) with check (true);
     }
   }
 
+  /// Get student data by student_id from auth_students table (for ID replacement)
+  static Future<Map<String, dynamic>> getStudentByStudentId(
+    String studentId,
+  ) async {
+    try {
+      await SupabaseService.initialize();
+
+      // Encrypt the student_id to match against stored encrypted values
+      final encryptedData = EncryptionService.encryptUserData({
+        'student_id': studentId,
+      });
+      final encryptedStudentId = encryptedData['student_id']?.toString() ?? '';
+
+      final response =
+          await client
+              .from(SupabaseConfig.authStudentsTable)
+              .select('*')
+              .eq('student_id', encryptedStudentId)
+              .maybeSingle();
+
+      if (response == null) {
+        return {'success': false, 'message': 'Student not found', 'data': null};
+      }
+
+      // Decrypt the student data
+      final decryptedData = EncryptionService.decryptUserData(response);
+
+      return {
+        'success': true,
+        'data': {
+          'auth_user_id': response['auth_user_id'],
+          'student_id': decryptedData['student_id'],
+          'name': decryptedData['name'],
+          'email': decryptedData['email'],
+          'course': decryptedData['course'],
+          'rfid_id': decryptedData['rfid_id'],
+          'balance': response['balance'],
+          'is_active': response['is_active'],
+          'created_at': response['created_at'],
+        },
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Error fetching student data: ${e.toString()}',
+        'data': null,
+      };
+    }
+  }
+
+  /// Replace RFID card for a student
+  static Future<Map<String, dynamic>> replaceRFIDCard({
+    required String studentId,
+    required String newRfidId,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      // Check if new RFID ID already exists
+      final rfidExists = await authStudentRfidExists(newRfidId);
+      if (rfidExists) {
+        return {
+          'success': false,
+          'error': 'RFID ID already exists',
+          'message': 'The new RFID ID is already registered to another student',
+        };
+      }
+
+      // Encrypt both student_id and new rfid_id
+      final encryptedStudentId =
+          EncryptionService.encryptUserData({
+            'student_id': studentId,
+          })['student_id']?.toString() ??
+          '';
+
+      final encryptedNewRfidId =
+          EncryptionService.encryptUserData({
+            'rfid_id': newRfidId,
+          })['rfid_id']?.toString() ??
+          '';
+
+      // Update the RFID ID in auth_students table
+      await adminClient
+          .from(SupabaseConfig.authStudentsTable)
+          .update({
+            'rfid_id': encryptedNewRfidId,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('student_id', encryptedStudentId);
+
+      return {'success': true, 'message': 'RFID card successfully replaced'};
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Error replacing RFID card: ${e.toString()}',
+      };
+    }
+  }
+
   // Authentication Operations
 
   /// Register student account with Supabase Auth and student table

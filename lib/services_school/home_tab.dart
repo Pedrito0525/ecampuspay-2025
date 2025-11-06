@@ -135,6 +135,9 @@ class _HomeTabState extends State<HomeTab> {
     final operationalType =
         SessionService.currentUserData?['operational_type']?.toString() ??
         'Main';
+    final serviceCategory =
+        SessionService.currentUserData?['service_category']?.toString() ?? '';
+    final bool vendorAllowed = serviceCategory == 'Vendor';
 
     return SingleChildScrollView(
       padding: EdgeInsets.all(isWeb ? 24 : 16),
@@ -266,23 +269,19 @@ class _HomeTabState extends State<HomeTab> {
 
           Row(
             children: [
-              Expanded(
-                child: _buildActionCard(
-                  title: 'Top Up Student',
-                  subtitle:
-                      operationalType == 'Main'
-                          ? 'Transfer balance to students'
-                          : 'Only available for Main accounts',
-                  icon: Icons.person_add,
-                  color: operationalType == 'Main' ? Colors.green : Colors.grey,
-                  onTap:
-                      operationalType == 'Main'
-                          ? () => _showTopUpDialog()
-                          : null,
-                  isWeb: isWeb,
+              if (vendorAllowed) ...[
+                Expanded(
+                  child: _buildActionCard(
+                    title: 'Top Up Student',
+                    subtitle: 'Transfer balance to students',
+                    icon: Icons.person_add,
+                    color: Colors.green,
+                    onTap: () => _showTopUpDialog(),
+                    isWeb: isWeb,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 16),
+                const SizedBox(width: 16),
+              ],
               Expanded(
                 child: _buildActionCard(
                   title: 'Transaction History',

@@ -9,8 +9,14 @@ class TopUpTab extends StatefulWidget {
   State<TopUpTab> createState() => _TopUpTabState();
 }
 
-class _TopUpTabState extends State<TopUpTab> {
+class _TopUpTabState extends State<TopUpTab>
+    with SingleTickerProviderStateMixin {
   static const Color evsuRed = Color(0xFFB91C1C);
+
+  // Tab Controller
+  late TabController _tabController;
+
+  // Manual Top-Up fields
   final TextEditingController _schoolIdController = TextEditingController();
   final TextEditingController _amountController = TextEditingController();
   Map<String, dynamic>? _selectedUser;
@@ -19,17 +25,27 @@ class _TopUpTabState extends State<TopUpTab> {
   List<Map<String, dynamic>> _recentTopUps = [];
   bool _isLoadingRecentTopUps = false;
 
+  // Verification fields
+  List<Map<String, dynamic>> _pendingRequests = [];
+  bool _isLoadingRequests = false;
+
   @override
   void initState() {
     super.initState();
+    print('🚀 DEBUG: TopUpTab initState() called');
+    _tabController = TabController(length: 2, vsync: this);
     _amountController.addListener(() {
       setState(() {}); // Rebuild when amount changes
     });
+    print('🔍 DEBUG: Loading recent top-ups...');
     _loadRecentTopUps(); // Load recent top-ups when the widget initializes
+    print('🔍 DEBUG: Loading pending verification requests...');
+    _loadPendingRequests(); // Load pending verification requests
   }
 
   @override
   void dispose() {
+    _tabController.dispose();
     _amountController.dispose();
     _schoolIdController.dispose();
     super.dispose();
@@ -40,30 +56,87 @@ class _TopUpTabState extends State<TopUpTab> {
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
 
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header
+        Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: screenWidth > 600 ? 24.0 : 16.0,
+            vertical: 16.0,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Top-Up Management',
+                style: TextStyle(
+                  fontSize: isMobile ? 24 : 28,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Manage manual top-ups and verify student payment requests',
+                style: TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+
+        // Tab Bar
+        Container(
+          margin: EdgeInsets.symmetric(
+            horizontal: screenWidth > 600 ? 24.0 : 16.0,
+          ),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: TabBar(
+            controller: _tabController,
+            labelColor: evsuRed,
+            unselectedLabelColor: Colors.grey,
+            indicatorColor: evsuRed,
+            indicatorWeight: 3,
+            labelStyle: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
+            tabs: const [
+              Tab(text: 'Manual Top-Up'),
+              Tab(text: 'Verification Requests'),
+            ],
+          ),
+        ),
+
+        // Tab Views
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [_buildManualTopUpTab(), _buildVerificationTab()],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Manual Top-Up Tab (existing functionality)
+  Widget _buildManualTopUpTab() {
     return SingleChildScrollView(
       child: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: screenWidth > 600 ? 24.0 : 16.0,
-        ),
+        padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header
-            Text(
-              'Top-Up Credits',
-              style: TextStyle(
-                fontSize: isMobile ? 24 : 28,
-                fontWeight: FontWeight.w700,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Add credits to user accounts using School ID',
-              style: TextStyle(fontSize: 14, color: Colors.grey),
-            ),
-            SizedBox(height: isMobile ? 20 : 30),
-
             // Top-up form and user info
             LayoutBuilder(
               builder: (context, constraints) {
@@ -91,6 +164,123 @@ class _TopUpTabState extends State<TopUpTab> {
             const SizedBox(height: 30),
             _buildRecentTopUps(),
           ],
+        ),
+      ),
+    );
+  }
+
+  // Verification Tab (new functionality)
+  Widget _buildVerificationTab() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final isTablet = screenWidth >= 600 && screenWidth < 900;
+
+    return RefreshIndicator(
+      onRefresh: _loadPendingRequests,
+      color: evsuRed,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Padding(
+          padding: EdgeInsets.all(isMobile ? 16.0 : 24.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Responsive header
+              isMobile
+                  ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Pending Verification Requests',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black87,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: _loadPendingRequests,
+                            icon: const Icon(
+                              Icons.refresh,
+                              color: evsuRed,
+                              size: 20,
+                            ),
+                            tooltip: 'Refresh',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
+                      ),
+                    ],
+                  )
+                  : Row(
+                    children: [
+                      Text(
+                        'Pending Verification Requests',
+                        style: TextStyle(
+                          fontSize: isTablet ? 18 : 20,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: _loadPendingRequests,
+                        icon: const Icon(Icons.refresh, color: evsuRed),
+                        tooltip: 'Refresh',
+                      ),
+                    ],
+                  ),
+              const SizedBox(height: 16),
+
+              if (_isLoadingRequests)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(40),
+                    child: CircularProgressIndicator(color: evsuRed),
+                  ),
+                )
+              else if (_pendingRequests.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(40),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: const Center(
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.check_circle_outline,
+                          color: Colors.grey,
+                          size: 64,
+                        ),
+                        SizedBox(height: 16),
+                        Text(
+                          'No pending verification requests',
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                ..._pendingRequests
+                    .map((request) => _buildRequestCard(request))
+                    .toList(),
+            ],
+          ),
         ),
       ),
     );
@@ -1066,6 +1256,1193 @@ class _TopUpTabState extends State<TopUpTab> {
                 ],
               ),
               content: Text('An unexpected error occurred: ${e.toString()}'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+      );
+    }
+  }
+
+  // =====================================================
+  // VERIFICATION TAB METHODS
+  // =====================================================
+
+  /// Load pending verification requests from top_up_requests table
+  Future<void> _loadPendingRequests() async {
+    print('🔍 DEBUG: Starting _loadPendingRequests()...');
+
+    setState(() {
+      _isLoadingRequests = true;
+    });
+
+    try {
+      print('🔍 DEBUG: Initializing SupabaseService...');
+      await SupabaseService.initialize();
+      print('✅ DEBUG: SupabaseService initialized successfully');
+
+      // Debug: Check adminClient configuration
+      print('🔍 DEBUG: Admin client ready for service_role operations');
+      print('🔍 DEBUG: Attempting to query top_up_requests table...');
+
+      // First, try to get raw data without join to test basic access
+      print(
+        '🔍 DEBUG: Attempting to fetch raw top_up_requests (without join)...',
+      );
+      try {
+        final rawTest = await SupabaseService.adminClient
+            .from('top_up_requests')
+            .select('*')
+            .limit(5);
+        print(
+          '✅ DEBUG: Raw query successful! Found ${rawTest.length} total records',
+        );
+        print(
+          '🔍 DEBUG: Sample raw data: ${rawTest.isNotEmpty ? rawTest[0] : "No data"}',
+        );
+      } catch (rawError) {
+        print('❌ DEBUG: Raw query FAILED: $rawError');
+        print('❌ DEBUG: Error type: ${rawError.runtimeType}');
+        if (rawError.toString().contains('relation') ||
+            rawError.toString().contains('does not exist')) {
+          print('❌ DEBUG: TABLE NOT FOUND in database!');
+          print(
+            '❌ DEBUG: Run create_top_up_requests_table.sql in Supabase SQL Editor',
+          );
+        } else if (rawError.toString().contains('permission') ||
+            rawError.toString().contains('denied')) {
+          print('❌ DEBUG: PERMISSION DENIED - Check RLS policies!');
+          print(
+            '❌ DEBUG: Run fix_top_up_requests_access.sql in Supabase SQL Editor',
+          );
+        } else {
+          print(
+            '❌ DEBUG: Unknown error - Check your Supabase service_role key in .env',
+          );
+        }
+      }
+
+      // Now try with status filter
+      print(
+        '🔍 DEBUG: Fetching pending requests (status = "Pending Verification")...',
+      );
+      final pendingTest = await SupabaseService.adminClient
+          .from('top_up_requests')
+          .select('*')
+          .eq('status', 'Pending Verification');
+      print(
+        '✅ DEBUG: Found ${pendingTest.length} requests with status "Pending Verification"',
+      );
+
+      if (pendingTest.isEmpty) {
+        print('⚠️  DEBUG: No pending requests found! Check if:');
+        print(
+          '   1. Data exists in database with status = "Pending Verification"',
+        );
+        print(
+          '   2. Status field is exactly "Pending Verification" (case-sensitive)',
+        );
+        setState(() {
+          _pendingRequests = [];
+          _isLoadingRequests = false;
+        });
+        return;
+      }
+
+      // Try to fetch with student info join (using LEFT JOIN instead of INNER)
+      print('🔍 DEBUG: Attempting to join with auth_students table...');
+
+      List<Map<String, dynamic>> response;
+      try {
+        // Try with LEFT JOIN first (more forgiving)
+        response = List<Map<String, dynamic>>.from(
+          await SupabaseService.adminClient
+              .from('top_up_requests')
+              .select('*, auth_students(student_id, name, email)')
+              .eq('status', 'Pending Verification')
+              .order('created_at', ascending: false),
+        );
+        print(
+          '✅ DEBUG: Query with LEFT JOIN successful! Found ${response.length} records',
+        );
+      } catch (joinError) {
+        print(
+          '⚠️  DEBUG: JOIN failed, fetching without student details: $joinError',
+        );
+        // Fallback: Fetch without join
+        response = List<Map<String, dynamic>>.from(
+          await SupabaseService.adminClient
+              .from('top_up_requests')
+              .select('*')
+              .eq('status', 'Pending Verification')
+              .order('created_at', ascending: false),
+        );
+        print(
+          '✅ DEBUG: Query without JOIN successful! Found ${response.length} records',
+        );
+      }
+
+      print('🔍 DEBUG: Response type: ${response.runtimeType}');
+      print(
+        '🔍 DEBUG: First record: ${response.isNotEmpty ? response[0] : "Empty"}',
+      );
+
+      List<Map<String, dynamic>> requests = [];
+      for (var i = 0; i < response.length; i++) {
+        var request = response[i];
+        print('🔍 DEBUG: Processing request ${i + 1}/${response.length}');
+        print('   - Request ID: ${request['id']}');
+        print('   - User ID: ${request['user_id']}');
+        print('   - Amount: ${request['amount']}');
+        print('   - Status: ${request['status']}');
+        print(
+          '   - Has auth_students data: ${request.containsKey('auth_students')}',
+        );
+
+        // Decrypt student name if encrypted
+        String studentName = 'Unknown Student';
+        try {
+          final studentData = request['auth_students'];
+          if (studentData != null && studentData is Map) {
+            print('   - Student data found: $studentData');
+            if (studentData['name'] != null) {
+              print('   - Attempting to decrypt name...');
+              studentName = EncryptionService.decryptData(studentData['name']);
+              print('   ✅ Decrypted name: $studentName');
+            } else {
+              print('   ⚠️  Student name is null');
+            }
+          } else {
+            print('   ⚠️  No student data from join, will use user_id');
+            // Fallback: Fetch student data manually by user_id
+            final userId = request['user_id'];
+            if (userId != null) {
+              try {
+                final studentResponse =
+                    await SupabaseService.adminClient
+                        .from('auth_students')
+                        .select('name')
+                        .eq('student_id', userId)
+                        .maybeSingle();
+
+                if (studentResponse != null &&
+                    studentResponse['name'] != null) {
+                  studentName = EncryptionService.decryptData(
+                    studentResponse['name'],
+                  );
+                  print('   ✅ Fetched and decrypted name: $studentName');
+                } else {
+                  studentName = 'Student $userId';
+                  print('   ⚠️  Using fallback name: $studentName');
+                }
+              } catch (fetchError) {
+                studentName = 'Student $userId';
+                print(
+                  '   ⚠️  Failed to fetch student, using fallback: $fetchError',
+                );
+              }
+            }
+          }
+        } catch (e) {
+          print('   ❌ Failed to decrypt student name: $e');
+          // Use user_id as fallback
+          final userId = request['user_id'];
+          studentName = userId != null ? 'Student $userId' : 'Unknown Student';
+        }
+
+        requests.add({
+          'id': request['id'],
+          'user_id': request['user_id'],
+          'amount': request['amount'],
+          'screenshot_url': request['screenshot_url'],
+          'gcash_reference': request['gcash_reference'] ?? 'N/A',
+          'status': request['status'],
+          'created_at': request['created_at'],
+          'student_name': studentName,
+        });
+        print('   ✅ Added request to list');
+      }
+
+      print('✅ DEBUG: Processed ${requests.length} requests successfully');
+      print('🔍 DEBUG: Setting state with ${requests.length} requests...');
+
+      setState(() {
+        _pendingRequests = requests;
+        _isLoadingRequests = false;
+      });
+
+      print(
+        '✅ DEBUG: State updated! UI should now show ${requests.length} requests',
+      );
+    } catch (e, stackTrace) {
+      print('❌ DEBUG: ERROR in _loadPendingRequests:');
+      print('   Error: $e');
+      print('   Stack trace: $stackTrace');
+      print('   Error type: ${e.runtimeType}');
+
+      // Try to provide more specific error info
+      if (e.toString().contains('permission denied')) {
+        print(
+          '❌ DEBUG: PERMISSION DENIED - Admin cannot access top_up_requests',
+        );
+        print(
+          '   Solution: Run fix_top_up_requests_access.sql in Supabase SQL Editor',
+        );
+      } else if (e.toString().contains('relation') ||
+          e.toString().contains('does not exist')) {
+        print('❌ DEBUG: TABLE NOT FOUND - top_up_requests table may not exist');
+        print(
+          '   Solution: Create the table using the schema in documentation',
+        );
+      } else if (e.toString().contains('column')) {
+        print('❌ DEBUG: COLUMN ERROR - Table structure may be incorrect');
+        print('   Check that all required columns exist in top_up_requests');
+      }
+
+      setState(() {
+        _pendingRequests = [];
+        _isLoadingRequests = false;
+      });
+    }
+  }
+
+  /// Build a request card displaying student info and proof
+  Widget _buildRequestCard(Map<String, dynamic> request) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    final createdAt = DateTime.parse(request['created_at']);
+    final formattedDate =
+        '${createdAt.day}/${createdAt.month}/${createdAt.year}';
+    final formattedTime =
+        '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+
+    return Container(
+      margin: EdgeInsets.only(bottom: isMobile ? 12 : 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Header with student info
+          Container(
+            padding: EdgeInsets.all(isMobile ? 12 : 16),
+            decoration: BoxDecoration(
+              color: Colors.orange.shade50,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(12),
+                topRight: Radius.circular(12),
+              ),
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: evsuRed,
+                  radius: isMobile ? 18 : 20,
+                  child: Text(
+                    request['student_name']
+                        .toString()
+                        .substring(0, 1)
+                        .toUpperCase(),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: isMobile ? 14 : 16,
+                    ),
+                  ),
+                ),
+                SizedBox(width: isMobile ? 8 : 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        request['student_name'] ?? 'Unknown Student',
+                        style: TextStyle(
+                          fontSize: isMobile ? 14 : 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        'ID: ${request['user_id']}',
+                        style: TextStyle(
+                          fontSize: isMobile ? 10 : 12,
+                          color: Colors.grey.shade600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(width: isMobile ? 4 : 8),
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isMobile ? 8 : 12,
+                    vertical: isMobile ? 4 : 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade100,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '₱${request['amount']}',
+                    style: TextStyle(
+                      color: Colors.orange.shade900,
+                      fontWeight: FontWeight.w700,
+                      fontSize: isMobile ? 14 : 18,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Request details
+          Padding(
+            padding: EdgeInsets.all(isMobile ? 12 : 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.access_time,
+                      size: isMobile ? 14 : 16,
+                      color: Colors.grey.shade600,
+                    ),
+                    SizedBox(width: isMobile ? 4 : 6),
+                    Expanded(
+                      child: Text(
+                        'Submitted: $formattedDate at $formattedTime',
+                        style: TextStyle(
+                          fontSize: isMobile ? 10 : 12,
+                          color: Colors.grey.shade600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: isMobile ? 6 : 8),
+
+                // GCash Reference Number
+                if (request['gcash_reference'] != null &&
+                    request['gcash_reference'] != 'N/A')
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.payment,
+                        size: isMobile ? 14 : 16,
+                        color: Colors.orange.shade700,
+                      ),
+                      SizedBox(width: isMobile ? 4 : 6),
+                      Expanded(
+                        child: Text(
+                          'GCash Ref: ${request['gcash_reference']}',
+                          style: TextStyle(
+                            fontSize: isMobile ? 10 : 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange.shade900,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                SizedBox(height: isMobile ? 8 : 12),
+
+                // Proof of payment preview
+                GestureDetector(
+                  onTap: () => _showRequestDetails(request),
+                  child: Container(
+                    height: isMobile ? 150 : 200,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        request['screenshot_url'],
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return Center(
+                            child: CircularProgressIndicator(
+                              value:
+                                  loadingProgress.expectedTotalBytes != null
+                                      ? loadingProgress.cumulativeBytesLoaded /
+                                          loadingProgress.expectedTotalBytes!
+                                      : null,
+                              color: evsuRed,
+                            ),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.error_outline,
+                                  color: Colors.grey.shade400,
+                                  size: 48,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Failed to load image',
+                                  style: TextStyle(color: Colors.grey.shade600),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(height: isMobile ? 6 : 8),
+                Center(
+                  child: Text(
+                    'Tap to view full image',
+                    style: TextStyle(
+                      fontSize: isMobile ? 9 : 11,
+                      color: Colors.grey.shade600,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+                SizedBox(height: isMobile ? 12 : 16),
+
+                // Action buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _showRejectDialog(request),
+                        icon: Icon(Icons.close, size: isMobile ? 16 : 18),
+                        label: Text(
+                          'Reject',
+                          style: TextStyle(fontSize: isMobile ? 12 : 14),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          side: const BorderSide(color: Colors.red),
+                          padding: EdgeInsets.symmetric(
+                            vertical: isMobile ? 10 : 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: isMobile ? 8 : 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => _showApproveDialog(request),
+                        icon: Icon(Icons.check, size: isMobile ? 16 : 18),
+                        label: Text(
+                          'Approve',
+                          style: TextStyle(fontSize: isMobile ? 12 : 14),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                          padding: EdgeInsets.symmetric(
+                            vertical: isMobile ? 10 : 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show full request details in a dialog
+  void _showRequestDetails(Map<String, dynamic> request) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final isMobile = screenWidth < 600;
+
+    final createdAt = DateTime.parse(request['created_at']);
+    final formattedDateTime =
+        '${createdAt.day}/${createdAt.month}/${createdAt.year} at ${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => Dialog(
+            child: Container(
+              constraints: BoxConstraints(
+                maxWidth: isMobile ? screenWidth * 0.95 : 600,
+                maxHeight: screenHeight * 0.9,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Header
+                  Container(
+                    padding: EdgeInsets.all(isMobile ? 16 : 20),
+                    decoration: BoxDecoration(
+                      color: evsuRed,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(12),
+                        topRight: Radius.circular(12),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.receipt_long,
+                          color: Colors.white,
+                          size: isMobile ? 20 : 24,
+                        ),
+                        SizedBox(width: isMobile ? 8 : 12),
+                        Text(
+                          'Request Details',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: isMobile ? 16 : 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          onPressed: () => Navigator.pop(context),
+                          icon: Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: isMobile ? 20 : 24,
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Content
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Padding(
+                        padding: EdgeInsets.all(isMobile ? 16 : 20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildDetailRow(
+                              'Student Name',
+                              request['student_name'],
+                              isMobile: isMobile,
+                            ),
+                            _buildDetailRow(
+                              'Student ID',
+                              request['user_id'],
+                              isMobile: isMobile,
+                            ),
+                            _buildDetailRow(
+                              'Amount',
+                              '₱${request['amount']}',
+                              isMobile: isMobile,
+                            ),
+                            _buildDetailRow(
+                              'GCash Reference',
+                              request['gcash_reference'] ?? 'N/A',
+                              isMobile: isMobile,
+                            ),
+                            _buildDetailRow(
+                              'Submitted',
+                              formattedDateTime,
+                              isMobile: isMobile,
+                            ),
+                            _buildDetailRow(
+                              'Status',
+                              request['status'],
+                              isMobile: isMobile,
+                            ),
+                            SizedBox(height: isMobile ? 16 : 20),
+                            Text(
+                              'Proof of Payment',
+                              style: TextStyle(
+                                fontSize: isMobile ? 12 : 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            SizedBox(height: isMobile ? 6 : 8),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxWidth: double.infinity,
+                                  maxHeight:
+                                      isMobile
+                                          ? screenHeight * 0.4
+                                          : screenHeight * 0.6,
+                                ),
+                                child: Image.network(
+                                  request['screenshot_url'],
+                                  fit: BoxFit.contain,
+                                  width: double.infinity,
+                                  loadingBuilder: (
+                                    context,
+                                    child,
+                                    loadingProgress,
+                                  ) {
+                                    if (loadingProgress == null) return child;
+                                    return Container(
+                                      height: 200,
+                                      alignment: Alignment.center,
+                                      child: CircularProgressIndicator(
+                                        value:
+                                            loadingProgress
+                                                        .expectedTotalBytes !=
+                                                    null
+                                                ? loadingProgress
+                                                        .cumulativeBytesLoaded /
+                                                    loadingProgress
+                                                        .expectedTotalBytes!
+                                                : null,
+                                        color: evsuRed,
+                                      ),
+                                    );
+                                  },
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      height: 200,
+                                      color: Colors.grey.shade200,
+                                      child: const Center(
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              Icons.error_outline,
+                                              size: 48,
+                                              color: Colors.grey,
+                                            ),
+                                            SizedBox(height: 8),
+                                            Text('Failed to load image'),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, {bool isMobile = false}) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: isMobile ? 8 : 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: isMobile ? 90 : 120,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: isMobile ? 11 : 13,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: isMobile ? 11 : 13,
+                color: Colors.black87,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show approve confirmation dialog
+  void _showApproveDialog(Map<String, dynamic> request) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            contentPadding: EdgeInsets.all(isMobile ? 16 : 24),
+            title: Row(
+              children: [
+                Icon(
+                  Icons.check_circle,
+                  color: Colors.green,
+                  size: isMobile ? 24 : 28,
+                ),
+                SizedBox(width: isMobile ? 6 : 8),
+                Expanded(
+                  child: Text(
+                    'Approve Top-Up Request',
+                    style: TextStyle(
+                      fontSize: isMobile ? 16 : 20,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Are you sure you want to approve this top-up request?',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: isMobile ? 13 : 14,
+                    ),
+                  ),
+                  SizedBox(height: isMobile ? 12 : 16),
+                  Text(
+                    'Student: ${request['student_name']}',
+                    style: TextStyle(fontSize: isMobile ? 12 : 14),
+                  ),
+                  SizedBox(height: isMobile ? 4 : 8),
+                  Text(
+                    'Student ID: ${request['user_id']}',
+                    style: TextStyle(fontSize: isMobile ? 12 : 14),
+                  ),
+                  SizedBox(height: isMobile ? 4 : 8),
+                  Text(
+                    'Amount: ₱${request['amount']}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: isMobile ? 14 : 16,
+                      color: Colors.green,
+                    ),
+                  ),
+                  SizedBox(height: isMobile ? 12 : 16),
+                  Container(
+                    padding: EdgeInsets.all(isMobile ? 10 : 12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.green.shade200),
+                    ),
+                    child: Text(
+                      'This will add ₱${request['amount']} to the student\'s balance and record the transaction.',
+                      style: TextStyle(fontSize: isMobile ? 11 : 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(fontSize: isMobile ? 12 : 14),
+                ),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _approveRequest(request);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isMobile ? 12 : 16,
+                    vertical: isMobile ? 8 : 12,
+                  ),
+                ),
+                child: Text(
+                  'Approve',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: isMobile ? 12 : 14,
+                  ),
+                ),
+              ),
+            ],
+            actionsPadding: EdgeInsets.all(isMobile ? 8 : 16),
+          ),
+    );
+  }
+
+  /// Show reject confirmation dialog
+  void _showRejectDialog(Map<String, dynamic> request) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final TextEditingController reasonController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            contentPadding: EdgeInsets.all(isMobile ? 16 : 24),
+            title: Row(
+              children: [
+                Icon(Icons.cancel, color: Colors.red, size: isMobile ? 24 : 28),
+                SizedBox(width: isMobile ? 6 : 8),
+                Expanded(
+                  child: Text(
+                    'Reject Top-Up Request',
+                    style: TextStyle(
+                      fontSize: isMobile ? 16 : 20,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Are you sure you want to reject this request?',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: isMobile ? 13 : 14,
+                    ),
+                  ),
+                  SizedBox(height: isMobile ? 12 : 16),
+                  Text(
+                    'Student: ${request['student_name']}',
+                    style: TextStyle(fontSize: isMobile ? 12 : 14),
+                  ),
+                  SizedBox(height: isMobile ? 4 : 8),
+                  Text(
+                    'Amount: ₱${request['amount']}',
+                    style: TextStyle(fontSize: isMobile ? 12 : 14),
+                  ),
+                  SizedBox(height: isMobile ? 12 : 16),
+                  TextField(
+                    controller: reasonController,
+                    decoration: InputDecoration(
+                      labelText: 'Reason for rejection (optional)',
+                      labelStyle: TextStyle(fontSize: isMobile ? 12 : 14),
+                      border: const OutlineInputBorder(),
+                      hintText: 'e.g., Invalid reference number',
+                      hintStyle: TextStyle(fontSize: isMobile ? 11 : 12),
+                      contentPadding: EdgeInsets.all(isMobile ? 10 : 12),
+                    ),
+                    style: TextStyle(fontSize: isMobile ? 12 : 14),
+                    maxLines: isMobile ? 3 : 2,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(fontSize: isMobile ? 12 : 14),
+                ),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _rejectRequest(request, reasonController.text);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isMobile ? 12 : 16,
+                    vertical: isMobile ? 8 : 12,
+                  ),
+                ),
+                child: Text(
+                  'Reject',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: isMobile ? 12 : 14,
+                  ),
+                ),
+              ),
+            ],
+            actionsPadding: EdgeInsets.all(isMobile ? 8 : 16),
+          ),
+    );
+  }
+
+  /// Approve a top-up request
+  Future<void> _approveRequest(Map<String, dynamic> request) async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (context) => const AlertDialog(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: evsuRed),
+                SizedBox(height: 16),
+                Text('Processing approval...'),
+              ],
+            ),
+          ),
+    );
+
+    try {
+      await SupabaseService.initialize();
+
+      // Get student's current balance
+      final studentResponse =
+          await SupabaseService.adminClient
+              .from('auth_students')
+              .select('balance')
+              .eq('student_id', request['user_id'])
+              .single();
+
+      final currentBalance = (studentResponse['balance'] ?? 0.0).toDouble();
+      final topUpAmount = (request['amount'] as int).toDouble();
+      final newBalance = currentBalance + topUpAmount;
+
+      // Update student balance
+      await SupabaseService.adminClient
+          .from('auth_students')
+          .update({
+            'balance': newBalance,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('student_id', request['user_id']);
+
+      // Insert into top_up_transactions
+      await SupabaseService.adminClient.from('top_up_transactions').insert({
+        'student_id': request['user_id'],
+        'amount': topUpAmount,
+        'previous_balance': currentBalance,
+        'new_balance': newBalance,
+        'transaction_type': 'top_up',
+        'processed_by': 'admin', // You can customize this
+        'notes': 'GCash payment verification - Request ID: ${request['id']}',
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      // Delete from top_up_requests
+      await SupabaseService.adminClient
+          .from('top_up_requests')
+          .delete()
+          .eq('id', request['id']);
+
+      // Close loading dialog
+      Navigator.pop(context);
+
+      // Refresh lists
+      _loadPendingRequests();
+      _loadRecentTopUps();
+
+      // Show success dialog
+      showDialog(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.green, size: 28),
+                  SizedBox(width: 8),
+                  Text('Request Approved'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Student: ${request['student_name']}'),
+                  Text('Student ID: ${request['user_id']}'),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Previous Balance: ₱${currentBalance.toStringAsFixed(2)}',
+                  ),
+                  Text('Top-Up Amount: ₱${topUpAmount.toStringAsFixed(2)}'),
+                  Text(
+                    'New Balance: ₱${newBalance.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
+                  child: const Text(
+                    'OK',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+      );
+    } catch (e) {
+      // Close loading dialog
+      Navigator.pop(context);
+
+      // Show error dialog
+      showDialog(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.error, color: Colors.red, size: 28),
+                  SizedBox(width: 8),
+                  Text('Approval Failed'),
+                ],
+              ),
+              content: Text('Failed to approve request: ${e.toString()}'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+      );
+    }
+  }
+
+  /// Reject a top-up request
+  Future<void> _rejectRequest(
+    Map<String, dynamic> request,
+    String reason,
+  ) async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (context) => const AlertDialog(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: evsuRed),
+                SizedBox(height: 16),
+                Text('Processing rejection...'),
+              ],
+            ),
+          ),
+    );
+
+    try {
+      await SupabaseService.initialize();
+
+      // Delete the request from top_up_requests table
+      await SupabaseService.adminClient
+          .from('top_up_requests')
+          .delete()
+          .eq('id', request['id']);
+
+      // Close loading dialog
+      Navigator.pop(context);
+
+      // Refresh pending requests
+      _loadPendingRequests();
+
+      // Show success dialog
+      showDialog(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.orange, size: 28),
+                  SizedBox(width: 8),
+                  Text('Request Rejected'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Student: ${request['student_name']}'),
+                  Text('Amount: ₱${request['amount']}'),
+                  if (reason.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text('Reason: $reason'),
+                  ],
+                ],
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
+                  child: const Text(
+                    'OK',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+      );
+    } catch (e) {
+      // Close loading dialog
+      Navigator.pop(context);
+
+      // Show error dialog
+      showDialog(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.error, color: Colors.red, size: 28),
+                  SizedBox(width: 8),
+                  Text('Rejection Failed'),
+                ],
+              ),
+              content: Text('Failed to reject request: ${e.toString()}'),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),

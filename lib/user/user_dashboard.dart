@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'dart:io';
 // removed unused: import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
+// removed unused: import 'package:url_launcher/url_launcher.dart';
+import 'package:image_picker/image_picker.dart';
 import 'security_privacy_screen.dart';
 import 'withdraw_screen.dart';
 import '../services/session_service.dart';
@@ -11,7 +13,7 @@ import '../services/notification_service.dart';
 import '../services/loan_reminder_service.dart';
 import '../login_page.dart';
 import 'dart:async'; // Added for StreamSubscription
-import '../services/paytaca_invoice_service.dart';
+// removed unused: import '../services/paytaca_invoice_service.dart';
 import '../admin/admin_dashboard.dart';
 import '../services_school/service_dashboard.dart';
 
@@ -879,14 +881,7 @@ class _HomeTabState extends State<_HomeTab> {
           // Quick Actions
           Row(
             children: [
-              Expanded(
-                child: _buildActionCard(
-                  title: 'Top Up',
-                  subtitle: 'Add money to your wallet',
-                  icon: '💰',
-                  onTap: () => _showTopUpDialog(),
-                ),
-              ),
+              Expanded(child: _buildTopUpActionCard()),
               const SizedBox(width: 12),
               Expanded(
                 child: _buildActionCard(
@@ -972,6 +967,71 @@ class _HomeTabState extends State<_HomeTab> {
           // Loan History
           _buildLoanHistory(),
         ],
+      ),
+    );
+  }
+
+  /// Build Top Up action card with office hours check
+  Widget _buildTopUpActionCard() {
+    final isAvailable = _isWithinOfficeHours();
+
+    return GestureDetector(
+      onTap: () => _showTopUpDialog(),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: Colors.grey[200]!),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors:
+                      isAvailable
+                          ? [evsuRed, evsuRedDark]
+                          : [Colors.grey.shade400, Colors.grey.shade600],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Center(
+                child: Text('💰', style: TextStyle(fontSize: 24)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Top Up',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: isAvailable ? Colors.black87 : Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              isAvailable ? 'Add money to your wallet' : 'Available 8AM-5PM',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11,
+                color: isAvailable ? Colors.grey[600] : Colors.orange.shade700,
+                fontWeight: isAvailable ? FontWeight.normal : FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1824,23 +1884,117 @@ class _HomeTabState extends State<_HomeTab> {
     }
   }
 
+  /// Check if current time is within office hours (8am-5pm Philippine time)
+  bool _isWithinOfficeHours() {
+    // Get current time in Philippine timezone (UTC+8)
+    final now = DateTime.now().toUtc().add(const Duration(hours: 8));
+    final hour = now.hour;
+
+    // Office hours: 8am (8) to 5pm (17)
+    return hour >= 8 && hour < 17;
+  }
+
+  /// Shows GCash QR-based top-up dialog
   void _showTopUpDialog() async {
     print("DEBUG: _showTopUpDialog called");
 
-    // Check if Paytaca is enabled
-    final isPaytacaEnabled = await SupabaseService.isPaytacaEnabled();
+    // Check if within office hours
+    if (!_isWithinOfficeHours()) {
+      final now = DateTime.now().toUtc().add(const Duration(hours: 8));
+      final currentTime =
+          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
 
-    print("DEBUG: isPaytacaEnabled result: $isPaytacaEnabled");
-
-    if (!isPaytacaEnabled) {
-      print("DEBUG: Paytaca is disabled, showing maintenance modal");
-      _showMaintenanceModal();
+      showDialog(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.access_time, color: evsuRed, size: 28),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('Service Unavailable')),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Top-up service is only available during office hours:',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      const Icon(Icons.schedule, color: evsuRed, size: 20),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '8:00 AM - 5:00 PM',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: evsuRed,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Monday to Friday',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.info_outline,
+                          size: 18,
+                          color: Colors.grey,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Current time: $currentTime (Philippine Time)',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Please try again during office hours. Thank you!',
+                    style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                  ),
+                ],
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: evsuRed,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text(
+                    'OK',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+      );
       return;
     }
 
-    print("DEBUG: Paytaca is enabled, showing top-up dialog");
-
-    final amounts = [50, 100, 200, 500];
+    final amounts = [100, 200, 500];
     int? selectedAmount = amounts.first;
 
     showDialog(
@@ -1854,7 +2008,7 @@ class _HomeTabState extends State<_HomeTab> {
                     vertical: 24,
                   ),
                   scrollable: true,
-                  title: const Text('Cash In'),
+                  title: const Text('Cash In via GCash'),
                   content: Padding(
                     padding: EdgeInsets.only(
                       bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -1884,7 +2038,7 @@ class _HomeTabState extends State<_HomeTab> {
                           ),
                           const SizedBox(height: 12),
                           const Text(
-                            'Payment will proceed via Paytaca invoice checkout.',
+                            'You will be shown a GCash QR code to scan and pay.',
                             style: TextStyle(fontSize: 12, color: Colors.grey),
                           ),
                         ],
@@ -1900,11 +2054,9 @@ class _HomeTabState extends State<_HomeTab> {
                       onPressed: () async {
                         if (selectedAmount == null) return;
                         Navigator.pop(context);
-                        await _startPaytacaInvoiceXpub(
-                          amountPhp: selectedAmount!,
-                        );
+                        _showGCashQRDialog(selectedAmount!);
                       },
-                      child: const Text('Continue'),
+                      child: const Text('Proceed to Payment'),
                     ),
                   ],
                 ),
@@ -1912,6 +2064,421 @@ class _HomeTabState extends State<_HomeTab> {
     );
   }
 
+  /// Displays GCash QR code and handles proof of payment submission
+  void _showGCashQRDialog(int amount) {
+    File? proofOfPayment;
+    bool isSubmitting = false;
+
+    // Map amount to QR code image asset
+    final qrImagePath = 'assets/gcash_$amount.png';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (context) => StatefulBuilder(
+            builder:
+                (context, setState) => AlertDialog(
+                  insetPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 24,
+                  ),
+                  scrollable: true,
+                  title: Row(
+                    children: [
+                      Icon(Icons.qr_code_2, color: evsuRed),
+                      const SizedBox(width: 8),
+                      Text('Pay ₱$amount via GCash'),
+                    ],
+                  ),
+                  content: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 480),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        const Text(
+                          'Scan this QR code using your GCash app:',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        // Display GCash QR Code
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.grey.withOpacity(0.2),
+                                spreadRadius: 2,
+                                blurRadius: 8,
+                              ),
+                            ],
+                          ),
+                          child: Image.asset(
+                            qrImagePath,
+                            width: 250,
+                            height: 250,
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                width: 250,
+                                height: 250,
+                                alignment: Alignment.center,
+                                child: const Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.error_outline,
+                                      size: 48,
+                                      color: Colors.red,
+                                    ),
+                                    SizedBox(height: 8),
+                                    Text(
+                                      'QR code not found',
+                                      style: TextStyle(color: Colors.red),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        const Divider(),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'After payment, upload your GCash receipt:',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        // Upload Proof Button
+                        OutlinedButton.icon(
+                          onPressed:
+                              isSubmitting
+                                  ? null
+                                  : () async {
+                                    final ImagePicker picker = ImagePicker();
+                                    final XFile? image = await picker.pickImage(
+                                      source: ImageSource.gallery,
+                                    );
+                                    if (image != null) {
+                                      setState(() {
+                                        proofOfPayment = File(image.path);
+                                      });
+                                    }
+                                  },
+                          icon: Icon(
+                            proofOfPayment != null
+                                ? Icons.check_circle
+                                : Icons.upload_file,
+                            color: proofOfPayment != null ? Colors.green : null,
+                          ),
+                          label: Text(
+                            proofOfPayment != null
+                                ? 'Receipt Uploaded ✓'
+                                : 'Upload Receipt Screenshot',
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(double.infinity, 48),
+                            side: BorderSide(
+                              color:
+                                  proofOfPayment != null
+                                      ? Colors.green
+                                      : evsuRed,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                        if (proofOfPayment != null) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.green),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.check_circle,
+                                  color: Colors.green,
+                                  size: 16,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'File: ${proofOfPayment!.path.split('/').last}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.green,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.amber),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(
+                                Icons.info_outline,
+                                color: Colors.amber,
+                                size: 20,
+                              ),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Your request will be verified by admin before credits are added.',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed:
+                          isSubmitting ? null : () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed:
+                          isSubmitting
+                              ? null
+                              : () async {
+                                // Validate that screenshot is provided
+                                if (proofOfPayment == null) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Please upload your GCash receipt screenshot',
+                                      ),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                setState(() => isSubmitting = true);
+
+                                try {
+                                  await _submitTopUpRequest(
+                                    amount: amount,
+                                    proofFile: proofOfPayment!,
+                                  );
+
+                                  if (context.mounted) {
+                                    Navigator.pop(context);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Top-up request submitted! Awaiting verification.',
+                                        ),
+                                        backgroundColor: Colors.green,
+                                      ),
+                                    );
+                                  }
+                                } catch (e) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Failed to submit: ${e.toString()}',
+                                        ),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                } finally {
+                                  if (mounted) {
+                                    setState(() => isSubmitting = false);
+                                  }
+                                }
+                              },
+                      child:
+                          isSubmitting
+                              ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                              : const Text("I've Paid - Submit"),
+                    ),
+                  ],
+                ),
+          ),
+    );
+  }
+
+  /// Submits top-up request to Supabase
+  Future<void> _submitTopUpRequest({
+    required int amount,
+    required File proofFile,
+  }) async {
+    final studentId = SessionService.currentUserStudentId;
+
+    print('DEBUG: Submitting top-up request for ₱$amount');
+
+    // Upload screenshot
+    final screenshotUrl = await _uploadProofToSupabase(proofFile, studentId);
+
+    if (screenshotUrl == null || screenshotUrl.isEmpty) {
+      throw Exception(
+        'Failed to upload receipt screenshot. Please check your internet connection and try again.',
+      );
+    }
+
+    print('DEBUG: Screenshot uploaded successfully: $screenshotUrl');
+
+    // Insert into top_up_requests table
+    try {
+      await SupabaseService.client.from('top_up_requests').insert({
+        'user_id': studentId,
+        'amount': amount,
+        'screenshot_url': screenshotUrl,
+        'status': 'Pending Verification',
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      print(
+        'DEBUG: Top-up request submitted successfully for ₱$amount by user $studentId',
+      );
+    } catch (e) {
+      print('ERROR: Failed to insert into top_up_requests table: $e');
+      throw Exception('Failed to save request. Please try again.');
+    }
+  }
+
+  /// Uploads proof of payment image to Supabase Storage with retry logic
+  Future<String?> _uploadProofToSupabase(File file, String studentId) async {
+    const maxRetries = 3;
+    const bucketName =
+        'Proof Payment'; // Match your Supabase bucket name EXACTLY
+
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        print(
+          'DEBUG: Upload attempt $attempt of $maxRetries for user: $studentId',
+        );
+        print('DEBUG: File path: ${file.path}');
+
+        // Check if file exists
+        if (!await file.exists()) {
+          print('ERROR: File does not exist at path: ${file.path}');
+          return null;
+        }
+
+        final fileName =
+            'topup_${studentId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        print('DEBUG: Generated filename: $fileName');
+
+        final bytes = await file.readAsBytes();
+        print('DEBUG: Read ${bytes.length} bytes from file');
+        print('DEBUG: Uploading to bucket: "$bucketName"');
+
+        try {
+          final uploadResponse = await SupabaseService.client.storage
+              .from(bucketName)
+              .uploadBinary(fileName, bytes);
+
+          print('DEBUG: Upload successful! Response: $uploadResponse');
+
+          // Get public URL
+          final publicUrl = SupabaseService.client.storage
+              .from(bucketName)
+              .getPublicUrl(fileName);
+
+          print('DEBUG: Generated public URL: $publicUrl');
+
+          if (publicUrl.isEmpty) {
+            print('ERROR: Public URL is empty');
+            return null;
+          }
+
+          return publicUrl; // Success! Return the URL
+        } catch (uploadError) {
+          print('ERROR: Upload failed on attempt $attempt: $uploadError');
+
+          // Check for specific errors
+          if (uploadError.toString().contains('403') ||
+              uploadError.toString().contains('Unauthorized') ||
+              uploadError.toString().contains('row-level security')) {
+            print('ERROR: Permission denied - RLS policy issue');
+            print('ERROR: Run FIX_STORAGE_POLICY_NOW.sql in Supabase');
+            print('ERROR: Or make bucket "Proof Payment" public');
+            return null; // Don't retry on permission errors
+          }
+
+          if (uploadError.toString().contains('404') ||
+              uploadError.toString().contains('Not found')) {
+            print('ERROR: Bucket "$bucketName" not found');
+            return null; // Don't retry if bucket doesn't exist
+          }
+
+          // For other errors (network, timeout, etc.), retry
+          if (attempt < maxRetries) {
+            print('DEBUG: Retrying in ${attempt * 2} seconds...');
+            await Future.delayed(Duration(seconds: attempt * 2));
+            continue; // Retry
+          } else {
+            print('ERROR: All $maxRetries upload attempts failed');
+            return null;
+          }
+        }
+      } catch (e, stackTrace) {
+        print('ERROR: Unexpected error on attempt $attempt: $e');
+        print('ERROR: Stack trace: $stackTrace');
+
+        if (attempt < maxRetries) {
+          print('DEBUG: Retrying in ${attempt * 2} seconds...');
+          await Future.delayed(Duration(seconds: attempt * 2));
+          continue; // Retry
+        } else {
+          print('ERROR: All $maxRetries attempts failed');
+          return null;
+        }
+      }
+    }
+
+    return null; // All retries exhausted
+  }
+
+  // ============================================================================
+  // DEPRECATED PAYTACA FUNCTIONS (Replaced with GCash QR Payment)
+  // ============================================================================
+  // The following functions are commented out as they are no longer used.
+  // They have been replaced with the GCash QR payment flow.
+  // ============================================================================
+
+  /*
   /// Fetches API configuration from the api_configuration table
   Future<Map<String, dynamic>?> _fetchApiConfiguration() async {
     try {
@@ -2031,6 +2598,7 @@ class _HomeTabState extends State<_HomeTab> {
       );
     }
   }
+  */
 
   void _showMaintenanceModal() {
     showDialog(

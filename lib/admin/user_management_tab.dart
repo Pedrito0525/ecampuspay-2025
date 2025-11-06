@@ -29,6 +29,18 @@ class _UserManagementTabState extends State<UserManagementTab> {
   final TextEditingController _courseController = TextEditingController();
   final TextEditingController _rfidController = TextEditingController();
 
+  // Form controllers for ID replacement
+  final TextEditingController _replacementStudentIdController =
+      TextEditingController();
+  final TextEditingController _replacementStudentNameController =
+      TextEditingController();
+  final TextEditingController _replacementRfidController =
+      TextEditingController();
+
+  // ID Replacement state
+  bool _isLoadingReplacementData = false;
+  String? _currentRfidId; // Store the current RFID ID before replacement
+
   // CSV Import variables
   List<List<dynamic>> _csvData = [];
   List<Map<String, String>> _importPreviewData = [];
@@ -63,6 +75,9 @@ class _UserManagementTabState extends State<UserManagementTab> {
     _emailController.dispose();
     _courseController.dispose();
     _rfidController.dispose();
+    _replacementStudentIdController.dispose();
+    _replacementStudentNameController.dispose();
+    _replacementRfidController.dispose();
     super.dispose();
   }
 
@@ -111,61 +126,103 @@ class _UserManagementTabState extends State<UserManagementTab> {
           // Initialize Supabase service
           await SupabaseService.initialize();
 
-          // Check if RFID already exists
-          final rfidExists = await SupabaseService.authStudentRfidExists(
-            scannedRfidId,
-          );
+          // Determine which form we're in based on _selectedFunction
+          final bool isReplacementForm = _selectedFunction == 1;
 
-          if (rfidExists) {
-            // Show error message for existing RFID
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('RFID ID $scannedRfidId is already registered'),
-                  backgroundColor: Colors.red,
-                  duration: const Duration(seconds: 4),
-                ),
-              );
-            }
+          // Check if RFID already exists (only for registration, not replacement)
+          if (!isReplacementForm) {
+            final rfidExists = await SupabaseService.authStudentRfidExists(
+              scannedRfidId,
+            );
 
-            // Update UI state but don't set the RFID
-            if (mounted) {
-              setState(() {
-                _isScanningRfid = false;
-                _scannerStatus =
-                    ESP32BluetoothService.isConnected
-                        ? "Connected to assigned scanner"
-                        : "Disconnected";
-              });
+            if (rfidExists) {
+              // Show error message for existing RFID
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'RFID ID $scannedRfidId is already registered',
+                    ),
+                    backgroundColor: Colors.red,
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              }
+
+              // Update UI state but don't set the RFID
+              if (mounted) {
+                setState(() {
+                  _isScanningRfid = false;
+                  _scannerStatus =
+                      ESP32BluetoothService.isConnected
+                          ? "Connected to assigned scanner"
+                          : "Disconnected";
+                });
+              }
+
+              // Clean up after scan (but keep connection alive)
+              _cleanupAfterScan();
+              _refreshConnectionStatus();
+              return;
             }
           } else {
-            // RFID is available, set it in the form
-            if (mounted) {
-              setState(() {
-                _rfidController.text = scannedRfidId;
-                _isScanningRfid = false;
-                _scannerStatus =
-                    ESP32BluetoothService.isConnected
-                        ? "Connected to assigned scanner"
-                        : "Disconnected";
-              });
-            }
+            // For replacement form, check if RFID exists and show warning
+            final rfidExists = await SupabaseService.authStudentRfidExists(
+              scannedRfidId,
+            );
 
-            // Show success message
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('RFID card scanned: $scannedRfidId'),
-                  backgroundColor: Colors.green,
-                  duration: const Duration(seconds: 3),
-                  action: SnackBarAction(
-                    label: 'OK',
-                    textColor: Colors.white,
-                    onPressed: () {},
+            if (rfidExists) {
+              // Show warning but still allow replacement
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Warning: RFID ID $scannedRfidId is already registered. Please verify before replacing.',
+                    ),
+                    backgroundColor: Colors.orange,
+                    duration: const Duration(seconds: 5),
                   ),
-                ),
-              );
+                );
+              }
             }
+          }
+
+          // RFID is available (or allowed for replacement), set it in the appropriate form
+          if (mounted) {
+            setState(() {
+              // Set RFID in the correct controller based on which form is active
+              if (isReplacementForm) {
+                _replacementRfidController.text = scannedRfidId;
+              } else {
+                _rfidController.text = scannedRfidId;
+              }
+
+              _isScanningRfid = false;
+              _scannerStatus =
+                  ESP32BluetoothService.isConnected
+                      ? "Connected to assigned scanner"
+                      : "Disconnected";
+            });
+          }
+
+          // Show success message
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  isReplacementForm
+                      ? 'New RFID card scanned: $scannedRfidId'
+                      : 'RFID card scanned: $scannedRfidId',
+                ),
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 3),
+                action: SnackBarAction(
+                  label: 'OK',
+                  textColor: Colors.white,
+                  onPressed: () {},
+                ),
+              ),
+            );
           }
         } catch (e) {
           // Handle validation error
@@ -1696,20 +1753,75 @@ class _UserManagementTabState extends State<UserManagementTab> {
           ),
           const SizedBox(height: 24),
 
-          _buildFormField('Student ID', Icons.badge),
+          _buildFormFieldWithLoading(
+            'Student ID',
+            Icons.badge,
+            controller: _replacementStudentIdController,
+            onChanged: _onReplacementStudentIdChanged,
+            isLoading: _isLoadingReplacementData,
+          ),
           const SizedBox(height: 16),
-          _buildFormField('Student Name', Icons.person),
+          _buildFormField(
+            'Student Name',
+            Icons.person,
+            controller: _replacementStudentNameController,
+          ),
           const SizedBox(height: 16),
-          _buildRFIDCardNumberField(),
+
+          // Display current RFID if found
+          if (_currentRfidId != null && _currentRfidId!.isNotEmpty) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.credit_card,
+                    color: Colors.orange.shade700,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Current RFID Card',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange.shade700,
+                          ),
+                        ),
+                        Text(
+                          _currentRfidId!,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.orange.shade900,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          _buildReplacementRFIDCardField(),
           const SizedBox(height: 24),
 
           Row(
             children: [
               Expanded(
                 child: ElevatedButton(
-                  onPressed:
-                      () =>
-                          _showSuccessDialog('RFID card issued successfully!'),
+                  onPressed: _performRFIDReplacement,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: evsuRed,
                     padding: const EdgeInsets.symmetric(vertical: 16),
@@ -1728,7 +1840,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
               ),
               const SizedBox(width: 16),
               OutlinedButton(
-                onPressed: () {},
+                onPressed: _clearReplacementForm,
                 style: OutlinedButton.styleFrom(
                   side: const BorderSide(color: evsuRed),
                   padding: const EdgeInsets.symmetric(
@@ -3873,79 +3985,6 @@ class _UserManagementTabState extends State<UserManagementTab> {
     );
   }
 
-  // New methods for ID Replacement functionality
-  Widget _buildRFIDCardNumberField() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'New RFID Card Number',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: Colors.black87,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: _rfidController,
-                decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.credit_card, color: evsuRed),
-                  hintText: 'Scan or enter RFID card number',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: evsuRed),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-              onPressed:
-                  (_isScanningRfid || !ESP32BluetoothService.isConnected)
-                      ? null
-                      : _scanRFIDCardForReplacement,
-              icon: Icon(
-                ESP32BluetoothService.isConnected
-                    ? Icons.qr_code_scanner
-                    : Icons.bluetooth_disabled,
-                size: 18,
-              ),
-              label: Text(
-                ESP32BluetoothService.isConnected ? 'Scan' : 'Connect First',
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                    ESP32BluetoothService.isConnected
-                        ? evsuRed
-                        : Colors.grey.shade500,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
   void _scanRFIDCardForReplacement() async {
     if (_isScanningRfid || !mounted) return;
 
@@ -4285,5 +4324,494 @@ class _UserManagementTabState extends State<UserManagementTab> {
         ],
       ),
     );
+  }
+
+  /// Lookup student data when Student ID is entered for replacement
+  void _onReplacementStudentIdChanged(String studentId) async {
+    // Clear previous data first
+    _replacementStudentNameController.clear();
+    _replacementRfidController.clear();
+
+    setState(() {
+      _currentRfidId = null;
+    });
+
+    // Skip if student ID is empty or not in expected format
+    // Expected format: 2022-21211 (9-10 characters with hyphen)
+    // Only check when user has entered complete ID (at least 9 characters)
+    if (studentId.trim().isEmpty || studentId.trim().length < 9) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingReplacementData = true;
+    });
+
+    try {
+      // Fetch student data from auth_students table
+      final result = await SupabaseService.getStudentByStudentId(
+        studentId.trim(),
+      );
+
+      setState(() {
+        _isLoadingReplacementData = false;
+      });
+
+      if (result['success'] && result['data'] != null) {
+        final studentData = result['data'];
+
+        setState(() {
+          _replacementStudentNameController.text = studentData['name'] ?? '';
+          _currentRfidId = studentData['rfid_id'];
+        });
+
+        // Show success message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Student found: ${studentData['name']}',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      } else {
+        // Student not found - show alert only if ID looks complete
+        if (mounted && studentId.trim().length >= 9) {
+          showDialog(
+            context: context,
+            builder:
+                (context) => AlertDialog(
+                  title: const Row(
+                    children: [
+                      Icon(Icons.warning, color: Colors.orange),
+                      SizedBox(width: 8),
+                      Text('Student Not Registered'),
+                    ],
+                  ),
+                  content: const Text(
+                    'The entered Student ID is not registered in the system. '
+                    'Please verify the Student ID or register the student first.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+          );
+        }
+      }
+    } catch (e) {
+      setState(() {
+        _isLoadingReplacementData = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error fetching student data: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Build RFID card field for replacement
+  Widget _buildReplacementRFIDCardField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'New RFID Card Number',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: _replacementRfidController,
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.credit_card, color: evsuRed),
+            hintText: 'Scan new RFID card',
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: evsuRed),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 12,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Scan Button
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed:
+                (_isScanningRfid || !ESP32BluetoothService.isConnected)
+                    ? null
+                    : _scanRFIDCardForReplacement,
+            icon:
+                _isScanningRfid
+                    ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                    : Icon(
+                      ESP32BluetoothService.isConnected
+                          ? Icons.nfc
+                          : Icons.bluetooth_disabled,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+            label: Text(
+              _isScanningRfid
+                  ? 'Scanning New RFID Card...'
+                  : ESP32BluetoothService.isConnected
+                  ? 'Scan New School ID Card'
+                  : 'Connect Scanner First',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+                  _isScanningRfid
+                      ? Colors.grey.shade400
+                      : ESP32BluetoothService.isConnected
+                      ? Colors.blue.shade600
+                      : Colors.grey.shade500,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              elevation: _isScanningRfid ? 0 : 2,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Scanner Status Indicator
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color:
+                ESP32BluetoothService.isConnected
+                    ? Colors.green.shade50
+                    : Colors.orange.shade50,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color:
+                  ESP32BluetoothService.isConnected
+                      ? Colors.green.shade200
+                      : Colors.orange.shade200,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                ESP32BluetoothService.isConnected
+                    ? Icons.bluetooth_connected
+                    : Icons.bluetooth_disabled,
+                size: 16,
+                color:
+                    ESP32BluetoothService.isConnected
+                        ? Colors.green.shade700
+                        : Colors.orange.shade700,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Scanner: $_scannerStatus',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color:
+                        ESP32BluetoothService.isConnected
+                            ? Colors.green.shade700
+                            : Colors.orange.shade700,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Clear the ID replacement form
+  void _clearReplacementForm() {
+    setState(() {
+      _replacementStudentIdController.clear();
+      _replacementStudentNameController.clear();
+      _replacementRfidController.clear();
+      _currentRfidId = null;
+    });
+  }
+
+  /// Perform RFID replacement process
+  void _performRFIDReplacement() async {
+    final String studentId = _replacementStudentIdController.text.trim();
+    final String studentName = _replacementStudentNameController.text.trim();
+    final String newRfidId = _replacementRfidController.text.trim();
+
+    // Validate required fields
+    if (studentId.isEmpty || studentName.isEmpty || newRfidId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Please fill in all required fields and scan new RFID card',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Show confirmation dialog
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Confirm RFID Replacement'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Replace RFID card for this student?'),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Student ID: $studentId',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  Text('Name: $studentName'),
+                  const SizedBox(height: 12),
+                  if (_currentRfidId != null && _currentRfidId!.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Old RFID: $_currentRfidId',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                              decoration: TextDecoration.lineThrough,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'New RFID: $newRfidId',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.green,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else ...[
+                    Text('New RFID: $newRfidId'),
+                  ],
+                  const SizedBox(height: 12),
+                  const Text(
+                    'This will update the RFID card for this student.',
+                    style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
+                child: const Text(
+                  'Replace',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+    );
+
+    if (confirm != true) return;
+
+    // Show loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (context) => const AlertDialog(
+            content: Row(
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 16),
+                Text('Replacing RFID card...'),
+              ],
+            ),
+          ),
+    );
+
+    try {
+      // Perform RFID replacement in database
+      final result = await SupabaseService.replaceRFIDCard(
+        studentId: studentId,
+        newRfidId: newRfidId,
+      );
+
+      Navigator.pop(context); // Close loading dialog
+
+      if (result['success']) {
+        // Show success dialog
+        await showDialog(
+          context: context,
+          builder:
+              (context) => AlertDialog(
+                title: const Row(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.green),
+                    SizedBox(width: 8),
+                    Text('Success'),
+                  ],
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'RFID card successfully replaced!',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text('Student: $studentName'),
+                    Text('Student ID: $studentId'),
+                    if (_currentRfidId != null &&
+                        _currentRfidId!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Old RFID: $_currentRfidId',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                          decoration: TextDecoration.lineThrough,
+                        ),
+                      ),
+                    ],
+                    Text(
+                      'New RFID: $newRfidId',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.green,
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('OK'),
+                  ),
+                ],
+              ),
+        );
+
+        // Clear the form after successful replacement
+        _clearReplacementForm();
+      } else {
+        // Show error dialog
+        showDialog(
+          context: context,
+          builder:
+              (context) => AlertDialog(
+                title: const Row(
+                  children: [
+                    Icon(Icons.error, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('Replacement Failed'),
+                  ],
+                ),
+                content: Text(result['message'] ?? 'Unknown error occurred'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('OK'),
+                  ),
+                ],
+              ),
+        );
+      }
+    } catch (e) {
+      Navigator.pop(context); // Close loading dialog
+
+      showDialog(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.error, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('Replacement Error'),
+                ],
+              ),
+              content: Text('An unexpected error occurred: $e'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+      );
+    }
   }
 }

@@ -169,15 +169,32 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   Future<void> _completeOnboarding() async {
-    print('DEBUG: Completing onboarding...');
-    await OnboardingUtils.markOnboardingCompleted();
-    print('DEBUG: Onboarding marked as completed');
+    try {
+      print('DEBUG: Starting onboarding completion...');
 
-    if (mounted) {
-      print('DEBUG: Navigating to login page');
-      Navigator.of(
+      // Mark onboarding as completed
+      await OnboardingUtils.markOnboardingCompleted();
+      print('DEBUG: Onboarding marked as completed');
+
+      // Verify it was saved
+      final verified = await OnboardingUtils.isOnboardingCompleted();
+      print('DEBUG: Onboarding completion verified: $verified');
+
+      if (!mounted) return;
+
+      // Navigate to login page
+      print('DEBUG: Navigating to LoginPage from OnboardingScreen');
+      await Navigator.of(
         context,
       ).pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
+    } catch (e) {
+      print('ERROR completing onboarding: $e');
+      // Still navigate to login even if save fails
+      if (mounted) {
+        await Navigator.of(
+          context,
+        ).pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
+      }
     }
   }
 

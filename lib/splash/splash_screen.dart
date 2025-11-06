@@ -45,37 +45,51 @@ class _SplashScreenState extends State<SplashScreen>
     _startSplashSequence();
   }
 
-  void _startSplashSequence() async {
-    // Start the animation
-    _animationController.forward();
+  Future<void> _startSplashSequence() async {
+    try {
+      // Start the animation
+      _animationController.forward();
 
-    // Wait for animation to complete and add some delay
-    await Future.delayed(const Duration(milliseconds: 3000));
+      // Wait for animation to complete and add some delay
+      await Future.delayed(const Duration(milliseconds: 3000));
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    // Always clear any existing session and go to login
-    // This ensures users always start fresh after app restart
-    if (SessionService.isLoggedIn) {
-      print('DEBUG: Found existing session on splash, clearing it');
-      await SessionService.clearSessionOnAppClose();
-    }
+      // Always clear any existing session on app startup
+      // This ensures users always start fresh after app restart
+      if (SessionService.isLoggedIn) {
+        print('DEBUG: Found existing session on splash, clearing it');
+        await SessionService.clearSessionOnAppClose();
+      }
 
-    // Check if onboarding has been completed
-    final onboardingCompleted = await OnboardingUtils.isOnboardingCompleted();
-    print('DEBUG: Onboarding completed status: $onboardingCompleted');
+      // Check if onboarding has been completed
+      final onboardingCompleted = await OnboardingUtils.isOnboardingCompleted();
+      print('DEBUG: Onboarding completed status: $onboardingCompleted');
 
-    // Navigate based on onboarding status
-    if (onboardingCompleted) {
-      print('DEBUG: Onboarding already completed, navigating to login');
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
-    } else {
-      print('DEBUG: Onboarding not completed, showing onboarding screen');
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const OnboardingScreen()),
-      );
+      if (!mounted) return;
+
+      // Navigate based on onboarding status
+      if (onboardingCompleted) {
+        print('DEBUG: Onboarding already completed, navigating to LoginPage');
+        await Navigator.of(
+          context,
+        ).pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
+      } else {
+        print(
+          'DEBUG: Onboarding NOT completed, navigating to OnboardingScreen',
+        );
+        await Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+        );
+      }
+    } catch (e) {
+      print('ERROR in splash sequence: $e');
+      // Fallback to onboarding screen on error
+      if (mounted) {
+        await Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+        );
+      }
     }
   }
 
