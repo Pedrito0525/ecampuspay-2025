@@ -20,6 +20,7 @@ class ESP32BluetoothService {
   static bool _isConnected = false;
   static bool _isScanning = false;
   static StreamSubscription<List<int>>? _characteristicSubscription;
+  static StreamSubscription<BluetoothConnectionState>? _connectionSubscription;
 
   // Stream controllers for various events
   static final StreamController<Map<String, dynamic>> _rfidDataController =
@@ -240,6 +241,39 @@ class ESP32BluetoothService {
       _characteristicSubscription = _txCharacteristic!.lastValueStream.listen(
         _onDataReceived,
       );
+
+      // Set up connection state monitoring to detect disconnections
+      _connectionSubscription?.cancel();
+      _connectionSubscription = device.connectionState.listen((state) {
+        debugPrint('🔌 ESP32 BLE Connection state changed: $state');
+        final bool wasConnected = _isConnected;
+        _isConnected = (state == BluetoothConnectionState.connected);
+
+        // If connection was lost, update state and notify listeners
+        if (wasConnected && !_isConnected) {
+          debugPrint('❌ ESP32 BLE Disconnected - updating UI state');
+          // Update internal state
+          _isScanning = false;
+          // Cancel characteristic subscription
+          _characteristicSubscription?.cancel();
+          _characteristicSubscription = null;
+          // Clear characteristics
+          _rxCharacteristic = null;
+          _txCharacteristic = null;
+          // Clear device reference to ensure state is consistent
+          // Note: The connection state listener will continue to work because
+          // it's attached to the device object itself (captured in the closure)
+          _connectedDevice = null;
+          // Notify UI immediately via stream
+          _connectionStatusController.add(false);
+          _statusMessageController.add('🔌 Disconnected from ESP32 BLE');
+        } else if (!wasConnected && _isConnected) {
+          debugPrint('✅ ESP32 BLE Reconnected - updating UI state');
+          // Notify UI of reconnection
+          _connectionStatusController.add(true);
+          _statusMessageController.add('✅ Reconnected to ESP32 BLE');
+        }
+      });
 
       _isConnected = true;
       _connectionStatusController.add(true);
@@ -499,6 +533,10 @@ class ESP32BluetoothService {
   /// Disconnect from ESP32 BLE
   static Future<void> disconnect() async {
     try {
+      // Cancel connection state subscription first
+      _connectionSubscription?.cancel();
+      _connectionSubscription = null;
+
       _characteristicSubscription?.cancel();
       _characteristicSubscription = null;
 
@@ -732,6 +770,7 @@ class ESP32BluetoothService {
 
   /// Dispose resources
   static void dispose() {
+    _connectionSubscription?.cancel();
     _characteristicSubscription?.cancel();
     _rfidDataController.close();
     _connectionStatusController.close();

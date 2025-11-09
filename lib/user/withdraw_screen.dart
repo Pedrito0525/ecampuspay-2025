@@ -12,9 +12,12 @@ class WithdrawScreen extends StatefulWidget {
 
 class _WithdrawScreenState extends State<WithdrawScreen> {
   final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _gcashNumberController = TextEditingController();
+  final TextEditingController _gcashAccountNameController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
   String _selectedDestinationType = 'admin'; // 'admin' or 'service'
+  String _selectedTransferType = 'Cash'; // 'Gcash' or 'Cash' (for admin withdrawal)
   int? _selectedServiceId;
   String? _selectedServiceName;
   List<Map<String, dynamic>> _serviceAccounts = [];
@@ -35,6 +38,8 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   @override
   void dispose() {
     _amountController.dispose();
+    _gcashNumberController.dispose();
+    _gcashAccountNameController.dispose();
     super.dispose();
   }
 
@@ -56,8 +61,16 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       final result = await SupabaseService.getAllServiceAccounts();
 
       if (result['success'] == true && result['data'] != null) {
+        // Filter to only show Vendor accounts (exclude Campus Service Units and School Org)
+        final allAccounts = List<Map<String, dynamic>>.from(result['data']);
+        final vendorAccounts = allAccounts.where((service) {
+          final serviceCategory = service['service_category']?.toString() ?? '';
+          // Only allow Vendor category for withdrawals/transfers
+          return serviceCategory == 'Vendor';
+        }).toList();
+
         setState(() {
-          _serviceAccounts = List<Map<String, dynamic>>.from(result['data']);
+          _serviceAccounts = vendorAccounts;
           _isLoading = false;
         });
       } else {
@@ -92,10 +105,11 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       return;
     }
 
+    // Validate service selection if withdrawing to service
     if (_selectedDestinationType == 'service' && _selectedServiceId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please select a service account'),
+          content: Text('Please select a vendor account'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -116,31 +130,55 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
       final amount = double.parse(_amountController.text);
 
-      final result = await SupabaseService.processUserWithdrawal(
-        studentId: studentId,
-        amount: amount,
-        destinationType: _selectedDestinationType,
-        destinationServiceId: _selectedServiceId,
-        destinationServiceName: _selectedServiceName,
-      );
+      Map<String, dynamic> result;
+
+      if (_selectedDestinationType == 'admin') {
+        // Create withdrawal request (pending admin approval)
+        result = await SupabaseService.createWithdrawalRequest(
+          studentId: studentId,
+          amount: amount,
+          transferType: _selectedTransferType,
+          gcashNumber: _selectedTransferType == 'Gcash'
+              ? _gcashNumberController.text.trim()
+              : null,
+          gcashAccountName: _selectedTransferType == 'Gcash'
+              ? _gcashAccountNameController.text.trim()
+              : null,
+        );
+      } else {
+        // Process immediate withdrawal to service (existing flow)
+        result = await SupabaseService.processUserWithdrawal(
+          studentId: studentId,
+          amount: amount,
+          destinationType: _selectedDestinationType,
+          destinationServiceId: _selectedServiceId,
+          destinationServiceName: _selectedServiceName,
+        );
+      }
 
       setState(() {
         _isProcessing = false;
       });
 
       if (result['success'] == true) {
-        // Update session balance
-        await SessionService.refreshUserData();
+        // Update session balance only if it was an immediate withdrawal (service)
+        if (_selectedDestinationType == 'service') {
+          await SessionService.refreshUserData();
+        }
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(result['message'] ?? 'Withdrawal successful'),
+              content: Text(result['message'] ?? 
+                (_selectedDestinationType == 'admin'
+                    ? 'Withdrawal request submitted successfully'
+                    : 'Withdrawal successful')),
               backgroundColor: Colors.green,
+              duration: const Duration(seconds: 4),
             ),
           );
 
-          // Return true to indicate successful withdrawal
+          // Return true to indicate successful withdrawal/request
           Navigator.pop(context, true);
         }
       } else {
@@ -209,6 +247,22 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                       _buildDestinationSelection(),
 
                       const SizedBox(height: 24),
+
+                      // Transfer Type Selection (if admin selected)
+                      if (_selectedDestinationType == 'admin')
+                        _buildTransferTypeSelection(),
+
+                      if (_selectedDestinationType == 'admin')
+                        const SizedBox(height: 24),
+
+                      // GCash Details (if Gcash selected)
+                      if (_selectedDestinationType == 'admin' &&
+                          _selectedTransferType == 'Gcash')
+                        _buildGcashDetails(),
+
+                      if (_selectedDestinationType == 'admin' &&
+                          _selectedTransferType == 'Gcash')
+                        const SizedBox(height: 24),
 
                       // Service Selection (if service destination selected)
                       if (_selectedDestinationType == 'service')
@@ -336,7 +390,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Withdraw To',
+          'Withdrawal Method',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
@@ -354,11 +408,11 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
             children: [
               RadioListTile<String>(
                 title: const Text(
-                  'Admin',
+                  'Withdraw via Admin',
                   style: TextStyle(fontWeight: FontWeight.w500),
                 ),
                 subtitle: const Text(
-                  'Withdraw to admin (cash out)',
+                  'Request withdrawal via Gcash or Cash (requires admin approval)',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 value: 'admin',
@@ -369,17 +423,19 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                     _selectedDestinationType = value!;
                     _selectedServiceId = null;
                     _selectedServiceName = null;
+                    // Reset transfer type to Cash when switching to admin
+                    _selectedTransferType = 'Cash';
                   });
                 },
               ),
               Divider(height: 1, color: Colors.grey[300]),
               RadioListTile<String>(
                 title: const Text(
-                  'Service Account',
+                  'Transfer to Vendor',
                   style: TextStyle(fontWeight: FontWeight.w500),
                 ),
                 subtitle: const Text(
-                  'Transfer to a service account',
+                  'Immediate transfer to a vendor service account',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 value: 'service',
@@ -398,12 +454,162 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     );
   }
 
+  Widget _buildTransferTypeSelection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Transfer Type',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey[300]!),
+          ),
+          child: Column(
+            children: [
+              RadioListTile<String>(
+                title: const Text(
+                  'Gcash',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+                subtitle: const Text(
+                  'Receive funds via Gcash transfer',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                value: 'Gcash',
+                groupValue: _selectedTransferType,
+                activeColor: evsuRed,
+                onChanged: (value) {
+                  setState(() {
+                    _selectedTransferType = value!;
+                  });
+                },
+              ),
+              Divider(height: 1, color: Colors.grey[300]),
+              RadioListTile<String>(
+                title: const Text(
+                  'Cash (Onsite)',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+                subtitle: const Text(
+                  'Pick up cash from admin office',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                value: 'Cash',
+                groupValue: _selectedTransferType,
+                activeColor: evsuRed,
+                onChanged: (value) {
+                  setState(() {
+                    _selectedTransferType = value!;
+                  });
+                },
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGcashDetails() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'GCash Details',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _gcashNumberController,
+          keyboardType: TextInputType.phone,
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.phone, color: evsuRed),
+            labelText: 'GCash Number',
+            hintText: '09XXXXXXXXX',
+            filled: true,
+            fillColor: Colors.white,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: evsuRed, width: 2),
+            ),
+          ),
+          validator: (value) {
+            if (_selectedTransferType == 'Gcash') {
+              if (value == null || value.trim().isEmpty) {
+                return 'Please enter your GCash number';
+              }
+              // Basic validation for GCash number (should be 11 digits, starts with 09)
+              if (!RegExp(r'^09\d{9}$').hasMatch(value.trim())) {
+                return 'Please enter a valid GCash number (09XXXXXXXXX)';
+              }
+            }
+            return null;
+          },
+        ),
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _gcashAccountNameController,
+          keyboardType: TextInputType.name,
+          textCapitalization: TextCapitalization.words,
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.person, color: evsuRed),
+            labelText: 'GCash Account Name',
+            hintText: 'Account holder name',
+            filled: true,
+            fillColor: Colors.white,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: evsuRed, width: 2),
+            ),
+          ),
+          validator: (value) {
+            if (_selectedTransferType == 'Gcash') {
+              if (value == null || value.trim().isEmpty) {
+                return 'Please enter your GCash account name';
+              }
+            }
+            return null;
+          },
+        ),
+      ],
+    );
+  }
+
   Widget _buildServiceSelection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Select Service',
+          'Select Vendor',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
@@ -418,56 +624,71 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: Colors.grey[300]!),
           ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<int>(
-              isExpanded: true,
-              hint: const Text('Choose a service'),
-              value: _selectedServiceId,
-              icon: const Icon(Icons.arrow_drop_down, color: evsuRed),
-              items:
-                  _serviceAccounts.map((service) {
-                    final serviceId = service['id'] as int;
-                    final serviceName =
-                        service['service_name']?.toString() ?? 'Unknown';
-                    final serviceCategory =
-                        service['service_category']?.toString() ?? '';
-
-                    return DropdownMenuItem<int>(
-                      value: serviceId,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            serviceName,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
-                            ),
-                          ),
-                          if (serviceCategory.isNotEmpty)
-                            Text(
-                              serviceCategory,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                        ],
+          child:
+              _serviceAccounts.isEmpty
+                  ? Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Text(
+                      'No vendors available',
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                        fontSize: 14,
                       ),
-                    );
-                  }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  _selectedServiceId = value;
-                  _selectedServiceName =
-                      _serviceAccounts
-                          .firstWhere((s) => s['id'] == value)['service_name']
-                          ?.toString();
-                });
-              },
-            ),
-          ),
+                    ),
+                  )
+                  : DropdownButtonHideUnderline(
+                    child: DropdownButton<int>(
+                      isExpanded: true,
+                      hint: const Text('Choose a vendor'),
+                      value: _selectedServiceId,
+                      icon: const Icon(Icons.arrow_drop_down, color: evsuRed),
+                      items:
+                          _serviceAccounts.map((service) {
+                            final serviceId = service['id'] as int;
+                            final serviceName =
+                                service['service_name']?.toString() ??
+                                'Unknown';
+                            final serviceCategory =
+                                service['service_category']?.toString() ?? '';
+
+                            return DropdownMenuItem<int>(
+                              value: serviceId,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    serviceName,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  if (serviceCategory.isNotEmpty)
+                                    Text(
+                                      serviceCategory,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedServiceId = value;
+                          _selectedServiceName =
+                              _serviceAccounts
+                                  .firstWhere(
+                                    (s) => s['id'] == value,
+                                  )['service_name']
+                                  ?.toString();
+                        });
+                      },
+                    ),
+                  ),
         ),
       ],
     );
@@ -501,11 +722,15 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                 const SizedBox(height: 8),
                 Text(
                   _selectedDestinationType == 'admin'
-                      ? '• Withdrawing to Admin allows you to convert your digital balance to cash.\n'
-                          '• Please visit the Admin office to collect your withdrawal.\n'
-                          '• This transaction cannot be reversed.'
-                      : '• Withdrawing to a Service Account transfers funds directly to that service.\n'
-                          '• The service balance will increase by the withdrawal amount.\n'
+                      ? _selectedTransferType == 'Gcash'
+                          ? '• Your withdrawal request will be reviewed by admin.\n'
+                              '• Once approved, funds will be transferred to your GCash account.\n'
+                              '• You will be notified when the request is processed.'
+                          : '• Your withdrawal request will be reviewed by admin.\n'
+                              '• Once approved, visit the Admin office to collect your cash.\n'
+                              '• You will be notified when ready for pickup.'
+                      : '• You can only transfer funds to Vendor accounts.\n'
+                          '• Campus Service Units and School Organizations cannot receive direct transfers.\n'
                           '• This transaction cannot be reversed.',
                   style: TextStyle(
                     fontSize: 12,
@@ -541,9 +766,11 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
               )
-              : const Text(
-                'Process Withdrawal',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              : Text(
+                _selectedDestinationType == 'admin'
+                    ? 'Submit Withdrawal Request'
+                    : 'Process Withdrawal',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
     );
   }

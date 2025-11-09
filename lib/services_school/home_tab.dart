@@ -534,31 +534,42 @@ class _HomeTabState extends State<HomeTab> {
 
       // Get top-up transactions (where this service account processed top-ups)
       try {
-        final topUpTransactions = await SupabaseService.client
-            .from('top_up_transactions')
-            .select(
-              'id, student_id, amount, created_at, processed_by, transaction_type, service_accounts!top_up_transactions_processed_by_fkey(service_name)',
-            )
-            .eq('processed_by', SessionService.currentUserName)
-            .order('created_at', ascending: false)
-            .limit(10);
+        // Get the service account username for filtering
+        final serviceUsername =
+            SessionService.currentUserData?['username']?.toString();
 
-        for (final transaction in topUpTransactions) {
+        if (serviceUsername != null && serviceUsername.isNotEmpty) {
+          final topUpTransactions = await SupabaseService.client
+              .from('top_up_transactions')
+              .select(
+                'id, student_id, amount, created_at, processed_by, transaction_type',
+              )
+              .eq('processed_by', serviceUsername) // Filter by username
+              .eq(
+                'transaction_type',
+                'top_up_services',
+              ) // Only show service account top-ups
+              .order('created_at', ascending: false)
+              .limit(10);
+
+          // Get service name from session data (since we're filtering by current service)
           final serviceName =
-              (transaction['service_accounts']?['service_name']?.toString()) ??
-              (transaction['processed_by']?.toString() ?? 'Unknown Service');
+              SessionService.currentUserData?['service_name']?.toString() ??
+              'Unknown Service';
 
-          activities.add({
-            'id': transaction['id'],
-            'type': 'top_up',
-            'title': 'Student Top-up',
-            'subtitle':
-                'Topped up ₱${(transaction['amount'] as num).toStringAsFixed(2)} to student ${transaction['student_id']} • Processed by: $serviceName',
-            'amount': transaction['amount'],
-            'created_at': transaction['created_at'],
-            'icon': Icons.person_add,
-            'color': Colors.green,
-          });
+          for (final transaction in topUpTransactions) {
+            activities.add({
+              'id': transaction['id'],
+              'type': 'top_up_services',
+              'title': 'Student Top-up',
+              'subtitle':
+                  'Topped up ₱${(transaction['amount'] as num).toStringAsFixed(2)} to student ${transaction['student_id']} • Processed by: $serviceName',
+              'amount': transaction['amount'],
+              'created_at': transaction['created_at'],
+              'icon': Icons.person_add,
+              'color': Colors.green,
+            });
+          }
         }
       } catch (e) {
         print('DEBUG HomeTab: Error loading top-up transactions: $e');
@@ -1199,17 +1210,26 @@ class _HomeTabState extends State<HomeTab> {
       print(
         'DEBUG: Creating top-up transaction for studentId: "$studentId", amount: $studentReceives',
       );
+      // Get the service account username for processed_by field
+      // Use username instead of service name to match the foreign key relationship
+      final serviceUsername =
+          SessionService.currentUserData?['username']?.toString() ??
+          SessionService.currentUserData?['service_name']?.toString() ??
+          'Service Account';
+      final serviceName =
+          SessionService.currentUserData?['service_name']?.toString() ??
+          'Service Account';
+
       final topUpResult = await SupabaseService.client.rpc(
         'process_top_up_transaction',
         params: {
           'p_student_id': studentId,
           'p_amount': studentReceives,
           'p_processed_by':
-              SessionService.currentUserName.isNotEmpty
-                  ? SessionService.currentUserName
-                  : 'Service Account',
-          'p_notes':
-              'Top-up from service account ${SessionService.currentUserName}',
+              serviceUsername, // Use username to match foreign key
+          'p_notes': 'Top-up from service account $serviceName',
+          'p_transaction_type':
+              'top_up_services', // Use top_up_services for service account top-ups
         },
       );
 
@@ -1270,31 +1290,42 @@ class _HomeTabState extends State<HomeTab> {
 
       // Get top-up transactions (where this service account processed top-ups)
       try {
-        final topUpTransactions = await SupabaseService.client
-            .from('top_up_transactions')
-            .select(
-              'id, student_id, amount, created_at, processed_by, transaction_type, service_accounts!top_up_transactions_processed_by_fkey(service_name)',
-            )
-            .eq('processed_by', SessionService.currentUserName)
-            .order('created_at', ascending: false)
-            .limit(50); // Load more for history modal
+        // Get the service account username for filtering
+        final serviceUsername =
+            SessionService.currentUserData?['username']?.toString();
 
-        for (final transaction in topUpTransactions) {
+        if (serviceUsername != null && serviceUsername.isNotEmpty) {
+          final topUpTransactions = await SupabaseService.client
+              .from('top_up_transactions')
+              .select(
+                'id, student_id, amount, created_at, processed_by, transaction_type',
+              )
+              .eq('processed_by', serviceUsername) // Filter by username
+              .eq(
+                'transaction_type',
+                'top_up_services',
+              ) // Only show service account top-ups
+              .order('created_at', ascending: false)
+              .limit(50); // Load more for history modal
+
+          // Get service name from session data (since we're filtering by current service)
           final serviceName =
-              (transaction['service_accounts']?['service_name']?.toString()) ??
-              (transaction['processed_by']?.toString() ?? 'Unknown Service');
+              SessionService.currentUserData?['service_name']?.toString() ??
+              'Unknown Service';
 
-          activities.add({
-            'id': transaction['id'],
-            'type': 'top_up',
-            'title': 'Student Top-up',
-            'subtitle':
-                'Topped up ₱${(transaction['amount'] as num).toStringAsFixed(2)} to student ${transaction['student_id']} • Processed by: $serviceName',
-            'amount': transaction['amount'],
-            'created_at': transaction['created_at'],
-            'icon': Icons.person_add,
-            'color': Colors.green,
-          });
+          for (final transaction in topUpTransactions) {
+            activities.add({
+              'id': transaction['id'],
+              'type': 'top_up',
+              'title': 'Student Top-up',
+              'subtitle':
+                  'Topped up ₱${(transaction['amount'] as num).toStringAsFixed(2)} to student ${transaction['student_id']} • Processed by: $serviceName',
+              'amount': transaction['amount'],
+              'created_at': transaction['created_at'],
+              'icon': Icons.person_add,
+              'color': Colors.green,
+            });
+          }
         }
       } catch (e) {
         print(
@@ -2028,24 +2059,43 @@ class _HomeTabState extends State<HomeTab> {
 
         case 'top_up':
           {
-            // Fetch top-up transaction details with service name
+            // Fetch top-up transaction details
             final result =
                 await SupabaseService.client
                     .from('top_up_transactions')
-                    .select(
-                      '*, service_accounts!top_up_transactions_processed_by_fkey(service_name)',
-                    )
+                    .select('*')
                     .eq('id', transactionId)
                     .single();
 
-            // Add service name to result
-            if (result['service_accounts'] != null) {
-              result['service_name'] =
-                  result['service_accounts']['service_name']?.toString() ??
-                  'Unknown Service';
+            // For service account top-ups, fetch service name from service_accounts table
+            final processedBy = result['processed_by']?.toString();
+            final transactionType = result['transaction_type']?.toString();
+
+            if (transactionType == 'top_up_services' && processedBy != null) {
+              try {
+                // Try to get service name from service_accounts table
+                final serviceAccount =
+                    await SupabaseService.client
+                        .from('service_accounts')
+                        .select('service_name, username')
+                        .eq('username', processedBy)
+                        .maybeSingle();
+
+                if (serviceAccount != null) {
+                  result['service_name'] =
+                      serviceAccount['service_name']?.toString() ??
+                      serviceAccount['username']?.toString() ??
+                      processedBy;
+                } else {
+                  result['service_name'] = processedBy;
+                }
+              } catch (_) {
+                // If lookup fails, use processed_by as fallback
+                result['service_name'] = processedBy;
+              }
             } else {
-              result['service_name'] =
-                  result['processed_by']?.toString() ?? 'Unknown Service';
+              // For admin or other transactions, use processed_by as is
+              result['service_name'] = processedBy ?? 'Unknown Service';
             }
 
             // Attempt to fetch and decrypt student name

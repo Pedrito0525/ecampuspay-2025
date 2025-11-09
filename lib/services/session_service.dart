@@ -225,13 +225,14 @@ class SessionService {
     }
   }
 
-  /// Login with student ID and password (for backward compatibility)
+  /// Login with student ID and password using Supabase Auth
+  /// Uses auth.users for authentication and auth_students for user details/balance
   static Future<Map<String, dynamic>> loginWithStudentId({
     required String studentId,
     required String password,
   }) async {
     try {
-      // Look up the user in auth_students table by student_id
+      // Step 1: Look up the user in auth_students table by student_id to get email and auth_user_id
       final userLookupResult = await _getUserByStudentIdFromAuthStudents(
         studentId,
       );
@@ -244,31 +245,94 @@ class SessionService {
       }
 
       final userData = userLookupResult['data'];
-      final storedPassword = userData['password'];
+      final email = userData['email']?.toString();
+      final authUserId = userData['auth_user_id']?.toString();
 
-      // Verify password using EncryptionService
-      final isPasswordValid = EncryptionService.verifyPassword(
-        password,
-        storedPassword,
+      // Validate that we have the required data
+      if (email == null || email.isEmpty) {
+        return {
+          'success': false,
+          'message': 'User email not found. Please contact support.',
+        };
+      }
+
+      if (authUserId == null || authUserId.isEmpty) {
+        return {
+          'success': false,
+          'message':
+              'User authentication ID not found. Please contact support.',
+        };
+      }
+
+      // Step 2: Authenticate with Supabase Auth using email and password
+      final authResponse = await SupabaseService.client.auth.signInWithPassword(
+        email: email,
+        password: password,
       );
 
-      if (!isPasswordValid) {
+      if (authResponse.user == null) {
         return {
           'success': false,
           'message': 'Invalid password. Please check your credentials.',
         };
       }
 
-      // Save session with user data
-      await saveSession(userData, 'student');
+      // Step 3: Verify that the authenticated user's ID matches the auth_user_id from auth_students
+      if (authResponse.user!.id != authUserId) {
+        // Sign out if IDs don't match (security check)
+        await SupabaseService.client.auth.signOut();
+        return {
+          'success': false,
+          'message':
+              'Authentication verification failed. Please contact support.',
+        };
+      }
+
+      // Step 4: Get full user data from auth_students table (including balance)
+      final fullUserDataResult = await _getUserDataFromAuthStudents(authUserId);
+
+      if (!fullUserDataResult['success']) {
+        await SupabaseService.client.auth.signOut();
+        return {
+          'success': false,
+          'message': 'User data not found. Please contact support.',
+        };
+      }
+
+      final fullUserData = fullUserDataResult['data'];
+
+      // Step 5: Save session with complete user data from auth_students
+      await saveSession(fullUserData, 'student');
 
       return {
         'success': true,
-        'data': userData,
+        'data': fullUserData,
         'message': 'Login successful!',
       };
     } catch (e) {
-      return {'success': false, 'message': 'Login failed: ${e.toString()}'};
+      // Handle specific Supabase Auth errors
+      String errorMessage = 'Login failed: ${e.toString()}';
+
+      if (e.toString().contains('Invalid login credentials') ||
+          e.toString().contains('invalid_credentials') ||
+          e.toString().contains('Invalid password')) {
+        errorMessage = 'Invalid password. Please check your credentials.';
+      } else if (e.toString().contains('Email not confirmed') ||
+          e.toString().contains('email_not_confirmed')) {
+        errorMessage = 'Please verify your email before logging in.';
+      } else if (e.toString().contains('User not found') ||
+          e.toString().contains('user_not_found')) {
+        errorMessage = 'Student ID not found. Please check your credentials.';
+      }
+
+      // Ensure we're signed out on error
+      try {
+        await SupabaseService.client.auth.signOut();
+      } catch (_) {
+        // Ignore sign out errors
+      }
+
+      return {'success': false, 'message': errorMessage};
     }
   }
 
@@ -337,6 +401,7 @@ class SessionService {
   }
 
   /// Get user data from auth_students table
+  /// Returns decrypted user data including balance and auth_user_id
   static Future<Map<String, dynamic>> _getUserDataFromAuthStudents(
     String authUserId,
   ) async {
@@ -352,9 +417,22 @@ class SessionService {
         return {'success': false, 'message': 'User data not found'};
       }
 
-      // Decrypt sensitive data before returning
+      // Decrypt sensitive data (name, email, course, rfid_id)
+      // Non-encrypted fields (balance, auth_user_id, student_id, etc.) are preserved
       final decryptedData = EncryptionService.decryptUserData(response);
-      return {'success': true, 'data': decryptedData};
+
+      // Ensure balance and auth_user_id are included (they're not encrypted, so should be preserved)
+      // But let's explicitly add them to be safe
+      final userData = {
+        ...decryptedData,
+        'balance': response['balance'] ?? 0.0,
+        'auth_user_id': response['auth_user_id'],
+        'student_id': response['student_id'], // student_id is not encrypted
+        'is_active': response['is_active'] ?? true,
+        'taptopay': response['taptopay'] ?? true,
+      };
+
+      return {'success': true, 'data': userData};
     } catch (e) {
       return {
         'success': false,
@@ -364,11 +442,12 @@ class SessionService {
   }
 
   /// Get user by student ID from auth_students table
+  /// Returns decrypted user data including auth_user_id and email for authentication
   static Future<Map<String, dynamic>> _getUserByStudentIdFromAuthStudents(
     String studentId,
   ) async {
     try {
-      // Query auth_students table by student_id
+      // Query auth_students table by student_id (student_id is stored as plain text)
       final response =
           await SupabaseService.client
               .from(SupabaseConfig.authStudentsTable)
@@ -383,10 +462,21 @@ class SessionService {
         };
       }
 
-      // Decrypt the user data
+      // Decrypt sensitive data (name, email, course, rfid_id)
+      // Non-encrypted fields (auth_user_id, balance, student_id, etc.) are preserved
       final decryptedData = EncryptionService.decryptUserData(response);
 
-      return {'success': true, 'data': decryptedData};
+      // Ensure auth_user_id and other non-encrypted fields are explicitly included
+      final userData = {
+        ...decryptedData,
+        'auth_user_id': response['auth_user_id'],
+        'student_id': response['student_id'], // student_id is not encrypted
+        'balance': response['balance'] ?? 0.0,
+        'is_active': response['is_active'] ?? true,
+        'taptopay': response['taptopay'] ?? true,
+      };
+
+      return {'success': true, 'data': userData};
     } catch (e) {
       return {
         'success': false,

@@ -51,7 +51,10 @@ class _UserManagementTabState extends State<UserManagementTab> {
   StreamSubscription? _connectionStatusSubscription;
   StreamSubscription? _statusSubscription;
   bool _isScanningRfid = false;
+  bool _isScannerConnected = false;
   String _scannerStatus = "Disconnected";
+  Timer? _autoReconnectTimer;
+  Timer? _connectionCheckTimer;
 
   // Student data fetching
   bool _isLoadingStudentData = false;
@@ -69,6 +72,8 @@ class _UserManagementTabState extends State<UserManagementTab> {
 
   @override
   void dispose() {
+    _autoReconnectTimer?.cancel();
+    _connectionCheckTimer?.cancel();
     _cleanupBluetoothService();
     _studentIdController.dispose();
     _studentNameController.dispose();
@@ -153,16 +158,11 @@ class _UserManagementTabState extends State<UserManagementTab> {
               if (mounted) {
                 setState(() {
                   _isScanningRfid = false;
-                  _scannerStatus =
-                      ESP32BluetoothService.isConnected
-                          ? "Connected to assigned scanner"
-                          : "Disconnected";
                 });
               }
 
               // Clean up after scan (but keep connection alive)
               _cleanupAfterScan();
-              _refreshConnectionStatus();
               return;
             }
           } else {
@@ -198,12 +198,11 @@ class _UserManagementTabState extends State<UserManagementTab> {
               }
 
               _isScanningRfid = false;
-              _scannerStatus =
-                  ESP32BluetoothService.isConnected
-                      ? "Connected to assigned scanner"
-                      : "Disconnected";
             });
           }
+
+          // Update connection status
+          _checkAndUpdateConnectionStatus();
 
           // Show success message
           if (mounted) {
@@ -229,11 +228,10 @@ class _UserManagementTabState extends State<UserManagementTab> {
           if (mounted) {
             setState(() {
               _isScanningRfid = false;
-              _scannerStatus =
-                  ESP32BluetoothService.isConnected
-                      ? "Connected to assigned scanner"
-                      : "Disconnected";
             });
+
+            // Update connection status
+            _checkAndUpdateConnectionStatus();
 
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -258,7 +256,9 @@ class _UserManagementTabState extends State<UserManagementTab> {
         .listen((connected) {
           if (mounted) {
             setState(() {
-              _scannerStatus = connected ? "Connected" : "Disconnected";
+              _isScannerConnected = connected;
+              _scannerStatus =
+                  connected ? "Connected to assigned scanner" : "Disconnected";
             });
           }
         });
@@ -267,26 +267,101 @@ class _UserManagementTabState extends State<UserManagementTab> {
     _statusSubscription = ESP32BluetoothService.statusMessageStream.listen((
       message,
     ) {
-      // Only show error messages as snackbars to avoid spam
+      // Hide error messages from UI - only log to console for debugging
       if (message.contains('❌') || message.contains('error')) {
         if (mounted) {
           setState(() {
             _isScanningRfid = false;
           });
+          // Log error to console but don't show to user
+          print('BLE Status Error (hidden from UI): $message');
+        }
+      }
+    });
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(message),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 4),
-            ),
+    // Start auto-reconnect timer (check every 5 seconds)
+    _startAutoReconnectTimer();
+
+    // Start connection check timer (check every 3 seconds to refresh button state)
+    _startConnectionCheckTimer();
+  }
+
+  /// Start connection check timer to refresh button state every 3 seconds
+  void _startConnectionCheckTimer() {
+    // Cancel existing timer if any
+    _connectionCheckTimer?.cancel();
+
+    // Check connection status immediately
+    _checkAndUpdateConnectionStatus();
+
+    // Start periodic timer to check every 3 seconds
+    _connectionCheckTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (mounted && !_isScanningRfid) {
+        _checkAndUpdateConnectionStatus();
+      }
+    });
+  }
+
+  /// Check connection status and update state (refreshes button state)
+  void _checkAndUpdateConnectionStatus() {
+    if (!mounted) return;
+
+    // Check actual connection status from service
+    final bool isConnected = ESP32BluetoothService.isConnected;
+
+    // Only update if state changed to avoid unnecessary rebuilds
+    if (_isScannerConnected != isConnected) {
+      setState(() {
+        _isScannerConnected = isConnected;
+        _scannerStatus =
+            isConnected ? "Connected to assigned scanner" : "Disconnected";
+      });
+    }
+  }
+
+  /// Start auto-reconnect timer to check connection every 5 seconds
+  void _startAutoReconnectTimer() {
+    // Cancel existing timer if any
+    _autoReconnectTimer?.cancel();
+
+    // Start new periodic timer
+    _autoReconnectTimer = Timer.periodic(const Duration(seconds: 5), (
+      timer,
+    ) async {
+      // Only try to reconnect if not currently scanning and not connected
+      if (!_isScanningRfid && mounted) {
+        // Check current connection status
+        bool isConnected = ESP32BluetoothService.isConnected;
+
+        if (!isConnected) {
+          // Try to reconnect to assigned scanner
+          print(
+            'DEBUG: Auto-reconnect timer: Scanner disconnected, attempting reconnect...',
           );
+
+          // Update status
+          if (mounted) {
+            setState(() {
+              _scannerStatus = 'Reconnecting...';
+            });
+          }
+
+          // Attempt auto-connection
+          await _autoConnectToAssignedScanner();
         }
       }
     });
   }
 
   void _cleanupBluetoothService() {
+    // Cancel auto-reconnect timer
+    _autoReconnectTimer?.cancel();
+    _autoReconnectTimer = null;
+
+    // Cancel connection check timer
+    _connectionCheckTimer?.cancel();
+    _connectionCheckTimer = null;
+
     // Cancel all subscriptions
     _rfidDataSubscription?.cancel();
     _connectionStatusSubscription?.cancel();
@@ -304,32 +379,19 @@ class _UserManagementTabState extends State<UserManagementTab> {
     if (mounted) {
       setState(() {
         _isScanningRfid = false;
+        _isScannerConnected = false;
         _scannerStatus = "Disconnected";
       });
     }
   }
 
   void _checkExistingConnection() {
-    if (mounted) {
-      setState(() {
-        _scannerStatus =
-            ESP32BluetoothService.isConnected
-                ? "Connected to assigned scanner"
-                : "Disconnected";
-      });
-    }
+    _checkAndUpdateConnectionStatus();
   }
 
   /// Refresh the connection status and update UI accordingly
   void _refreshConnectionStatus() {
-    if (mounted) {
-      setState(() {
-        _scannerStatus =
-            ESP32BluetoothService.isConnected
-                ? "Connected to assigned scanner"
-                : "Disconnected";
-      });
-    }
+    _checkAndUpdateConnectionStatus();
   }
 
   /// Check and request Bluetooth permissions for Android 12+
@@ -503,12 +565,14 @@ class _UserManagementTabState extends State<UserManagementTab> {
         await _fallbackAutoConnect();
       }
     } catch (error) {
+      // Hide connection errors from UI - only log to console
+      print('DEBUG: Error getting assigned scanner (hidden from UI): $error');
       if (mounted) {
         setState(() {
-          _scannerStatus = 'Error checking assigned scanner: $error';
+          // Set generic disconnected status instead of error message
+          _scannerStatus = 'Disconnected';
         });
       }
-      print('DEBUG: Error getting assigned scanner: $error');
       // Try to fallback to paired devices
       await _fallbackAutoConnect();
     }
@@ -642,10 +706,11 @@ class _UserManagementTabState extends State<UserManagementTab> {
       if (pairedDevices.isEmpty) {
         if (mounted) {
           setState(() {
-            _scannerStatus = 'No paired ESP32 devices found';
+            // Hide connection details from UI - show generic status
+            _scannerStatus = 'Disconnected';
           });
         }
-        print('DEBUG: No paired ESP32 devices found');
+        print('DEBUG: No paired ESP32 devices found (hidden from UI)');
         return;
       }
 
@@ -678,17 +743,24 @@ class _UserManagementTabState extends State<UserManagementTab> {
       // If we get here, none of the paired devices connected successfully
       if (mounted) {
         setState(() {
-          _scannerStatus = 'Failed to connect to any paired device';
+          // Set generic disconnected status instead of error message
+          _scannerStatus = 'Disconnected';
         });
       }
-      print('DEBUG: Failed to connect to any paired ESP32 device');
+      print(
+        'DEBUG: Failed to connect to any paired ESP32 device (hidden from UI)',
+      );
     } catch (error) {
+      // Hide connection errors from UI - only log to console
+      print(
+        'DEBUG: Error in auto-connect to paired devices (hidden from UI): $error',
+      );
       if (mounted) {
         setState(() {
-          _scannerStatus = 'Error connecting to paired devices: $error';
+          // Set generic disconnected status instead of error message
+          _scannerStatus = 'Disconnected';
         });
       }
-      print('DEBUG: Error in auto-connect to paired devices: $error');
     }
   }
 
@@ -834,26 +906,36 @@ class _UserManagementTabState extends State<UserManagementTab> {
         } else {
           if (mounted) {
             setState(() {
-              _scannerStatus = "Failed to connect to $scannerId";
+              // Hide connection failure details from UI - show generic status
+              _scannerStatus = "Disconnected";
             });
           }
-          print('Failed to connect to assigned scanner: $scannerId');
+          print(
+            'Failed to connect to assigned scanner $scannerId (hidden from UI)',
+          );
         }
       } else {
         if (mounted) {
           setState(() {
-            _scannerStatus = "Scanner $scannerId not found";
+            // Hide connection failure details from UI - show generic status
+            _scannerStatus = "Disconnected";
           });
         }
-        print('Assigned scanner $scannerId not found in available devices');
+        print(
+          'Assigned scanner $scannerId not found in available devices (hidden from UI)',
+        );
       }
     } catch (error) {
+      // Hide connection errors from UI - only log to console
+      print(
+        'Error connecting to specific scanner $scannerId (hidden from UI): $error',
+      );
       if (mounted) {
         setState(() {
-          _scannerStatus = 'Error connecting to $scannerId: $error';
+          // Set generic disconnected status instead of error message
+          _scannerStatus = 'Disconnected';
         });
       }
-      print('Error connecting to specific scanner $scannerId: $error');
     }
   }
 
@@ -861,17 +943,15 @@ class _UserManagementTabState extends State<UserManagementTab> {
     // Stop any ongoing scanning but keep connection alive
     ESP32BluetoothService.stopScanner();
 
-    // Reset scanning state and update status based on actual connection
+    // Reset scanning state
     if (mounted) {
       setState(() {
         _isScanningRfid = false;
-        // Update status based on actual connection state, not hardcoded "Disconnected"
-        _scannerStatus =
-            ESP32BluetoothService.isConnected
-                ? "Connected to assigned scanner"
-                : "Disconnected";
       });
     }
+
+    // Update connection status based on actual connection state
+    _checkAndUpdateConnectionStatus();
 
     // Don't clean up connections - keep scanner connected for next scan!
     // _cleanupBluetoothService(); // Removed - this was disconnecting the scanner
@@ -1113,7 +1193,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed:
-                  (_isScanningRfid || !ESP32BluetoothService.isConnected)
+                  (_isScanningRfid || !_isScannerConnected)
                       ? null
                       : _scanRFIDCard,
               icon:
@@ -1127,7 +1207,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
                         ),
                       )
                       : Icon(
-                        ESP32BluetoothService.isConnected
+                        _isScannerConnected
                             ? Icons.nfc
                             : Icons.bluetooth_disabled,
                         color: Colors.white,
@@ -1136,7 +1216,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
               label: Text(
                 _isScanningRfid
                     ? 'Scanning RFID Card...'
-                    : ESP32BluetoothService.isConnected
+                    : _isScannerConnected
                     ? 'Scan School ID Card'
                     : 'Connect Scanner First',
                 style: const TextStyle(
@@ -1149,7 +1229,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
                 backgroundColor:
                     _isScanningRfid
                         ? Colors.grey.shade400
-                        : ESP32BluetoothService.isConnected
+                        : _isScannerConnected
                         ? Colors.blue.shade600
                         : Colors.grey.shade500,
                 foregroundColor: Colors.white,
@@ -1171,13 +1251,13 @@ class _UserManagementTabState extends State<UserManagementTab> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color:
-                  ESP32BluetoothService.isConnected
+                  _isScannerConnected
                       ? Colors.green.shade50
                       : Colors.orange.shade50,
               borderRadius: BorderRadius.circular(6),
               border: Border.all(
                 color:
-                    ESP32BluetoothService.isConnected
+                    _isScannerConnected
                         ? Colors.green.shade200
                         : Colors.orange.shade200,
               ),
@@ -1186,12 +1266,12 @@ class _UserManagementTabState extends State<UserManagementTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  ESP32BluetoothService.isConnected
+                  _isScannerConnected
                       ? Icons.bluetooth_connected
                       : Icons.bluetooth_disabled,
                   size: 16,
                   color:
-                      ESP32BluetoothService.isConnected
+                      _isScannerConnected
                           ? Colors.green.shade700
                           : Colors.orange.shade700,
                 ),
@@ -1202,7 +1282,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
                     style: TextStyle(
                       fontSize: 12,
                       color:
-                          ESP32BluetoothService.isConnected
+                          _isScannerConnected
                               ? Colors.green.shade700
                               : Colors.orange.shade700,
                       fontWeight: FontWeight.w500,
@@ -2572,12 +2652,38 @@ class _UserManagementTabState extends State<UserManagementTab> {
   }
 
   void _showSuccessDialog(String message) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
     showDialog(
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('Success'),
-            content: Text(message),
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.check_circle, color: Colors.green),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    'Success',
+                    style: TextStyle(fontSize: isMobile ? 18 : 20),
+                  ),
+                ),
+              ],
+            ),
+            content: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.6,
+                maxWidth: screenWidth * 0.9,
+              ),
+              child: SingleChildScrollView(
+                child: Text(
+                  message,
+                  style: TextStyle(fontSize: isMobile ? 13 : 14),
+                ),
+              ),
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -2585,6 +2691,204 @@ class _UserManagementTabState extends State<UserManagementTab> {
               ),
             ],
           ),
+    );
+  }
+
+  void _showRegistrationSuccessDialog({
+    required String studentName,
+    required String studentId,
+    required String email,
+    required String course,
+    required String rfidCard,
+    required String password,
+  }) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.check_circle, color: Colors.green, size: 24),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    'Account Registered Successfully!',
+                    style: TextStyle(
+                      fontSize: isMobile ? 16 : 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            content: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.6,
+                maxWidth: screenWidth * 0.9,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.person,
+                            color: Colors.green.shade700,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Student account has been registered',
+                              style: TextStyle(
+                                fontSize: isMobile ? 12 : 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.green.shade700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    _buildSuccessDialogRow(
+                      'Student',
+                      studentName,
+                      isMobile: isMobile,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildSuccessDialogRow(
+                      'Student ID',
+                      studentId,
+                      isMobile: isMobile,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildSuccessDialogRow(
+                      'Email',
+                      email,
+                      isMobile: isMobile,
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildSuccessDialogRow(
+                      'Course',
+                      course,
+                      isMobile: isMobile,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildSuccessDialogRow(
+                      'RFID Card',
+                      rfidCard,
+                      isMobile: isMobile,
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.blue.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.lock,
+                                color: Colors.blue.shade700,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Temporary Password:',
+                                style: TextStyle(
+                                  fontSize: isMobile ? 11 : 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.blue.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          SelectableText(
+                            password,
+                            style: TextStyle(
+                              fontSize: isMobile ? 13 : 14,
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.w600,
+                              color: Colors.blue.shade900,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'The student can now login using their email and password.',
+                      style: TextStyle(
+                        fontSize: isMobile ? 11 : 12,
+                        fontStyle: FontStyle.italic,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  /// Build success dialog row
+  Widget _buildSuccessDialogRow(
+    String label,
+    String value, {
+    required bool isMobile,
+    int maxLines = 1,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: isMobile ? 75 : 85,
+          child: Text(
+            '$label:',
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: isMobile ? 12 : 13,
+              color: Colors.grey.shade700,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(fontSize: isMobile ? 12 : 13),
+            maxLines: maxLines,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 
@@ -2649,32 +2953,72 @@ class _UserManagementTabState extends State<UserManagementTab> {
       return;
     }
 
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
     showDialog(
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('Register Account'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Register this student account with RFID card?'),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Student ID: $studentId',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  Text('Name: $studentName'),
-                  Text('Email: $email'),
-                  Text('Course: $course'),
-                  Text('RFID Card: $rfidCard'),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'This will complete the registration process and the student can immediately use their RFID card.',
-                    style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
-                  ),
-                ],
+            title: Text(
+              'Register Account',
+              style: TextStyle(fontSize: isMobile ? 18 : 20),
+            ),
+            content: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.6,
+                maxWidth: screenWidth * 0.9,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Register this student account with RFID card?',
+                      style: TextStyle(fontSize: isMobile ? 13 : 14),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildConfirmDialogRow(
+                      'Student ID',
+                      studentId,
+                      isMobile: isMobile,
+                    ),
+                    const SizedBox(height: 6),
+                    _buildConfirmDialogRow(
+                      'Name',
+                      studentName,
+                      isMobile: isMobile,
+                    ),
+                    const SizedBox(height: 6),
+                    _buildConfirmDialogRow(
+                      'Email',
+                      email,
+                      isMobile: isMobile,
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: 6),
+                    _buildConfirmDialogRow(
+                      'Course',
+                      course,
+                      isMobile: isMobile,
+                    ),
+                    const SizedBox(height: 6),
+                    _buildConfirmDialogRow(
+                      'RFID Card',
+                      rfidCard,
+                      isMobile: isMobile,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'This will complete the registration process and the student can immediately use their RFID card.',
+                      style: TextStyle(
+                        fontSize: isMobile ? 11 : 12,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             actions: [
@@ -2705,17 +3049,35 @@ class _UserManagementTabState extends State<UserManagementTab> {
     Navigator.pop(dialogContext); // Close dialog
 
     // Show loading
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder:
-          (context) => const AlertDialog(
-            content: Row(
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(width: 16),
-                Text('Registering student account...'),
-              ],
+          (context) => AlertDialog(
+            content: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: screenWidth * 0.9),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: isMobile ? 12 : 16),
+                  Flexible(
+                    child: Text(
+                      'Registering student account...',
+                      style: TextStyle(fontSize: isMobile ? 13 : 14),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
     );
@@ -2734,30 +3096,48 @@ class _UserManagementTabState extends State<UserManagementTab> {
 
       if (result['success']) {
         final password = result['data']['password'] ?? 'N/A';
-        _showSuccessDialog(
-          'Account registered successfully!\n\n'
-          'Student: $studentName\n'
-          'Student ID: $studentId\n'
-          'Email: $email\n'
-          'Course: $course\n'
-          'RFID Card: $rfidCard\n\n'
-          'Password: $password\n\n'
-          'The student can now login using their email and password.',
+        _showRegistrationSuccessDialog(
+          studentName: studentName,
+          studentId: studentId,
+          email: email,
+          course: course,
+          rfidCard: rfidCard,
+          password: password,
         );
         _clearForm(); // Clear the form after successful registration
       } else {
+        final screenWidth = MediaQuery.of(context).size.width;
+        final isMobile = screenWidth < 600;
+
         showDialog(
           context: context,
           builder:
               (context) => AlertDialog(
-                title: const Row(
+                title: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.error, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('Registration Failed'),
+                    const Icon(Icons.error, color: Colors.red),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'Registration Failed',
+                        style: TextStyle(fontSize: isMobile ? 18 : 20),
+                      ),
+                    ),
                   ],
                 ),
-                content: Text(result['message'] ?? 'Unknown error occurred'),
+                content: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.6,
+                    maxWidth: screenWidth * 0.9,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Text(
+                      result['message'] ?? 'Unknown error occurred',
+                      style: TextStyle(fontSize: isMobile ? 13 : 14),
+                    ),
+                  ),
+                ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(context),
@@ -2770,18 +3150,38 @@ class _UserManagementTabState extends State<UserManagementTab> {
     } catch (e) {
       Navigator.pop(context); // Close loading dialog
 
+      final screenWidth = MediaQuery.of(context).size.width;
+      final isMobile = screenWidth < 600;
+
       showDialog(
         context: context,
         builder:
             (context) => AlertDialog(
-              title: const Row(
+              title: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.error, color: Colors.red),
-                  SizedBox(width: 8),
-                  Text('Registration Error'),
+                  const Icon(Icons.error, color: Colors.red),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      'Registration Error',
+                      style: TextStyle(fontSize: isMobile ? 18 : 20),
+                    ),
+                  ),
                 ],
               ),
-              content: Text('An unexpected error occurred: $e'),
+              content: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.6,
+                  maxWidth: screenWidth * 0.9,
+                ),
+                child: SingleChildScrollView(
+                  child: Text(
+                    'An unexpected error occurred: $e',
+                    style: TextStyle(fontSize: isMobile ? 13 : 14),
+                  ),
+                ),
+              ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
@@ -2959,9 +3359,9 @@ class _UserManagementTabState extends State<UserManagementTab> {
     if (_isScanningRfid) return;
 
     // Check if scanner is connected before allowing scan
-    if (!ESP32BluetoothService.isConnected) {
+    if (!_isScannerConnected) {
       _showError(
-        "EvsuPayScanner1 is not connected. Please wait for auto-connection or check scanner status.",
+        "Scanner is not connected. Please wait for auto-connection or check scanner status.",
       );
       return;
     }
@@ -3033,13 +3433,27 @@ class _UserManagementTabState extends State<UserManagementTab> {
         // Stop scanning but keep connection alive
         ESP32BluetoothService.stopScanner();
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('RFID scanning error: $error'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
-          ),
-        );
+        // Hide BLE connection errors from UI - only log to console
+        final errorString = error.toString().toLowerCase();
+        final isConnectionError =
+            errorString.contains('connection') ||
+            errorString.contains('bluetooth') ||
+            errorString.contains('ble') ||
+            errorString.contains('connect') ||
+            errorString.contains('disconnect');
+
+        if (isConnectionError) {
+          print('RFID scanning BLE connection error (hidden from UI): $error');
+        } else {
+          // Show non-connection errors (e.g., scanning timeout, card read error)
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('RFID scanning error: $error'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
       }
     }
   }
@@ -3125,21 +3539,40 @@ class _UserManagementTabState extends State<UserManagementTab> {
       // Reset scanning state
       setState(() {
         _isScanningRfid = false;
-        _scannerStatus = "Error";
+        // Set generic disconnected status instead of "Error" for BLE connection issues
+        _scannerStatus =
+            ESP32BluetoothService.isConnected
+                ? "Connected to assigned scanner"
+                : "Disconnected";
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
-          action: SnackBarAction(
-            label: 'OK',
-            textColor: Colors.white,
-            onPressed: () {},
+      // Check if this is a BLE connection error message
+      final messageLower = message.toLowerCase();
+      final isConnectionError =
+          messageLower.contains('connection') ||
+          messageLower.contains('bluetooth') ||
+          messageLower.contains('ble') ||
+          messageLower.contains('connect') ||
+          messageLower.contains('disconnect');
+
+      // Hide BLE connection error messages from UI
+      if (isConnectionError) {
+        print('BLE connection error (hidden from UI): $message');
+      } else {
+        // Show non-connection errors (e.g., scanning timeout, permission issues)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'OK',
+              textColor: Colors.white,
+              onPressed: () {},
+            ),
           ),
-        ),
-      );
+        );
+      }
     }
   }
 
@@ -3989,9 +4422,9 @@ class _UserManagementTabState extends State<UserManagementTab> {
     if (_isScanningRfid || !mounted) return;
 
     // Check if scanner is connected before allowing scan
-    if (!ESP32BluetoothService.isConnected) {
+    if (!_isScannerConnected) {
       _showError(
-        "EvsuPayScanner1 is not connected. Please wait for auto-connection or check scanner status.",
+        "Scanner is not connected. Please wait for auto-connection or check scanner status.",
       );
       return;
     }
@@ -4075,13 +4508,29 @@ class _UserManagementTabState extends State<UserManagementTab> {
         // Stop scanning but keep connection alive
         ESP32BluetoothService.stopScanner();
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('RFID replacement scanning error: $error'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
-          ),
-        );
+        // Hide BLE connection errors from UI - only log to console
+        final errorString = error.toString().toLowerCase();
+        final isConnectionError =
+            errorString.contains('connection') ||
+            errorString.contains('bluetooth') ||
+            errorString.contains('ble') ||
+            errorString.contains('connect') ||
+            errorString.contains('disconnect');
+
+        if (isConnectionError) {
+          print(
+            'RFID replacement scanning BLE connection error (hidden from UI): $error',
+          );
+        } else {
+          // Show non-connection errors (e.g., scanning timeout, card read error)
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('RFID replacement scanning error: $error'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
       }
     }
   }
@@ -4170,17 +4619,35 @@ class _UserManagementTabState extends State<UserManagementTab> {
     Navigator.pop(context); // Close dialog
 
     // Show loading dialog
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder:
-          (context) => const AlertDialog(
-            content: Row(
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(width: 16),
-                Text('Deleting user...'),
-              ],
+          (context) => AlertDialog(
+            content: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: screenWidth * 0.9),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: isMobile ? 12 : 16),
+                  Flexible(
+                    child: Text(
+                      'Deleting user...',
+                      style: TextStyle(fontSize: isMobile ? 13 : 14),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
     );
@@ -4323,6 +4790,38 @@ class _UserManagementTabState extends State<UserManagementTab> {
           Expanded(child: Text(value)),
         ],
       ),
+    );
+  }
+
+  /// Build confirm dialog row for registration confirmation
+  Widget _buildConfirmDialogRow(
+    String label,
+    String value, {
+    required bool isMobile,
+    int maxLines = 1,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: isMobile ? 70 : 80,
+          child: Text(
+            '$label:',
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: isMobile ? 12 : 13,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(fontSize: isMobile ? 12 : 13),
+            maxLines: maxLines,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 
@@ -4471,7 +4970,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
           width: double.infinity,
           child: ElevatedButton.icon(
             onPressed:
-                (_isScanningRfid || !ESP32BluetoothService.isConnected)
+                (_isScanningRfid || !_isScannerConnected)
                     ? null
                     : _scanRFIDCardForReplacement,
             icon:
@@ -4485,7 +4984,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
                       ),
                     )
                     : Icon(
-                      ESP32BluetoothService.isConnected
+                      _isScannerConnected
                           ? Icons.nfc
                           : Icons.bluetooth_disabled,
                       color: Colors.white,
@@ -4494,7 +4993,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
             label: Text(
               _isScanningRfid
                   ? 'Scanning New RFID Card...'
-                  : ESP32BluetoothService.isConnected
+                  : _isScannerConnected
                   ? 'Scan New School ID Card'
                   : 'Connect Scanner First',
               style: const TextStyle(
@@ -4507,7 +5006,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
               backgroundColor:
                   _isScanningRfid
                       ? Colors.grey.shade400
-                      : ESP32BluetoothService.isConnected
+                      : _isScannerConnected
                       ? Colors.blue.shade600
                       : Colors.grey.shade500,
               foregroundColor: Colors.white,
@@ -4526,13 +5025,13 @@ class _UserManagementTabState extends State<UserManagementTab> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color:
-                ESP32BluetoothService.isConnected
+                _isScannerConnected
                     ? Colors.green.shade50
                     : Colors.orange.shade50,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color:
-                  ESP32BluetoothService.isConnected
+                  _isScannerConnected
                       ? Colors.green.shade200
                       : Colors.orange.shade200,
             ),
@@ -4541,12 +5040,12 @@ class _UserManagementTabState extends State<UserManagementTab> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                ESP32BluetoothService.isConnected
+                _isScannerConnected
                     ? Icons.bluetooth_connected
                     : Icons.bluetooth_disabled,
                 size: 16,
                 color:
-                    ESP32BluetoothService.isConnected
+                    _isScannerConnected
                         ? Colors.green.shade700
                         : Colors.orange.shade700,
               ),
@@ -4557,7 +5056,7 @@ class _UserManagementTabState extends State<UserManagementTab> {
                   style: TextStyle(
                     fontSize: 12,
                     color:
-                        ESP32BluetoothService.isConnected
+                        _isScannerConnected
                             ? Colors.green.shade700
                             : Colors.orange.shade700,
                     fontWeight: FontWeight.w500,
@@ -4682,17 +5181,35 @@ class _UserManagementTabState extends State<UserManagementTab> {
     if (confirm != true) return;
 
     // Show loading
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder:
-          (context) => const AlertDialog(
-            content: Row(
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(width: 16),
-                Text('Replacing RFID card...'),
-              ],
+          (context) => AlertDialog(
+            content: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: screenWidth * 0.9),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: isMobile ? 12 : 16),
+                  Flexible(
+                    child: Text(
+                      'Replacing RFID card...',
+                      style: TextStyle(fontSize: isMobile ? 13 : 14),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
     );

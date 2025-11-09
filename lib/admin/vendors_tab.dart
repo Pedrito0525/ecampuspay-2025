@@ -340,18 +340,6 @@ class _VendorsTabState extends State<VendorsTab> {
           ),
           SizedBox(height: isMobile ? 12 : 16),
           _buildPasswordField(),
-          SizedBox(height: isMobile ? 12 : 16),
-          _buildFormField(
-            'Scanner ID (Optional)',
-            Icons.qr_code_scanner,
-            _scannerIdController,
-          ),
-          SizedBox(height: isMobile ? 12 : 16),
-          _buildFormField(
-            'Commission Rate (%)',
-            Icons.percent,
-            _commissionRateController,
-          ),
           SizedBox(height: isMobile ? 16 : 24),
 
           // Action buttons - responsive layout
@@ -506,7 +494,12 @@ class _VendorsTabState extends State<VendorsTab> {
           // Statistics Header
           Container(
             color: evsuRed,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            padding: EdgeInsets.fromLTRB(
+              MediaQuery.of(context).size.width < 400 ? 12 : 16,
+              0,
+              MediaQuery.of(context).size.width < 400 ? 12 : 16,
+              MediaQuery.of(context).size.width < 400 ? 12 : 16,
+            ),
             child: FutureBuilder<Map<String, dynamic>>(
               future: SupabaseService.getServiceAccounts(),
               builder: (context, snapshot) {
@@ -531,6 +524,79 @@ class _VendorsTabState extends State<VendorsTab> {
                   snapshot.data!['data'],
                 );
 
+                final screenWidth = MediaQuery.of(context).size.width;
+                final isMobile = screenWidth < 600;
+                final isSmallPhone = screenWidth < 400;
+
+                // Responsive grid layout
+                if (isMobile) {
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _StatCard(
+                              title: 'Total Services',
+                              value: serviceAccounts.length.toString(),
+                              icon: Icons.business_center,
+                              color: Colors.white,
+                            ),
+                          ),
+                          SizedBox(width: isSmallPhone ? 6 : 8),
+                          Expanded(
+                            child: _StatCard(
+                              title: 'Active',
+                              value:
+                                  serviceAccounts
+                                      .where((s) => s['is_active'] == true)
+                                      .length
+                                      .toString(),
+                              icon: Icons.check_circle,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: isSmallPhone ? 6 : 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _StatCard(
+                              title: 'Main',
+                              value:
+                                  serviceAccounts
+                                      .where(
+                                        (s) => s['operational_type'] == 'Main',
+                                      )
+                                      .length
+                                      .toString(),
+                              icon: Icons.account_balance,
+                              color: Colors.white,
+                            ),
+                          ),
+                          SizedBox(width: isSmallPhone ? 6 : 8),
+                          Expanded(
+                            child: _StatCard(
+                              title: 'Sub',
+                              value:
+                                  serviceAccounts
+                                      .where(
+                                        (s) => s['operational_type'] == 'Sub',
+                                      )
+                                      .length
+                                      .toString(),
+                              icon: Icons.subdirectory_arrow_right,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                }
+
+                // Tablet and desktop layout
                 return Row(
                   children: [
                     Expanded(
@@ -541,7 +607,7 @@ class _VendorsTabState extends State<VendorsTab> {
                         color: Colors.white,
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: _StatCard(
                         title: 'Active',
@@ -554,7 +620,7 @@ class _VendorsTabState extends State<VendorsTab> {
                         color: Colors.white,
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: _StatCard(
                         title: 'Main Accounts',
@@ -567,7 +633,7 @@ class _VendorsTabState extends State<VendorsTab> {
                         color: Colors.white,
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: _StatCard(
                         title: 'Sub Accounts',
@@ -589,7 +655,10 @@ class _VendorsTabState extends State<VendorsTab> {
           // Service List
           Padding(
             padding: EdgeInsets.symmetric(
-              horizontal: MediaQuery.of(context).size.width > 600 ? 24.0 : 16.0,
+              horizontal:
+                  MediaQuery.of(context).size.width < 400
+                      ? 12.0
+                      : (MediaQuery.of(context).size.width > 600 ? 24.0 : 16.0),
             ),
             child: _buildServiceManagementList(),
           ),
@@ -599,9 +668,13 @@ class _VendorsTabState extends State<VendorsTab> {
   }
 
   Widget _buildServiceManagementList() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final isSmallPhone = screenWidth < 400;
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24.0),
+      padding: EdgeInsets.all(isSmallPhone ? 12.0 : (isMobile ? 14.0 : 24.0)),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -615,16 +688,39 @@ class _VendorsTabState extends State<VendorsTab> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            'Manage Service Accounts',
-            style: TextStyle(
-              fontSize: MediaQuery.of(context).size.width > 600 ? 20 : 18,
-              fontWeight: FontWeight.w600,
-              color: Colors.black87,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Flexible(
+                child: Text(
+                  'Manage Service Accounts',
+                  style: TextStyle(
+                    fontSize: isSmallPhone ? 16 : (isMobile ? 18 : 20),
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.refresh, size: isSmallPhone ? 20 : 24),
+                onPressed: () {
+                  setState(() {}); // Refresh the list
+                },
+                tooltip: 'Refresh',
+                color: evsuRed,
+                padding: EdgeInsets.all(isSmallPhone ? 8 : 12),
+                constraints: BoxConstraints(
+                  minWidth: isSmallPhone ? 36 : 48,
+                  minHeight: isSmallPhone ? 36 : 48,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 20),
+          SizedBox(height: isSmallPhone ? 16 : 20),
 
           // Service accounts list
           FutureBuilder<Map<String, dynamic>>(
@@ -632,21 +728,90 @@ class _VendorsTabState extends State<VendorsTab> {
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(
-                  child: CircularProgressIndicator(color: evsuRed),
+                  child: Padding(
+                    padding: EdgeInsets.all(40.0),
+                    child: CircularProgressIndicator(color: evsuRed),
+                  ),
                 );
               }
 
               if (snapshot.hasError) {
                 return Center(
-                  child: Text(
-                    'Error loading service accounts: ${snapshot.error}',
-                    style: const TextStyle(color: Colors.red),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      children: [
+                        Icon(Icons.error_outline, color: Colors.red, size: 48),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Error loading service accounts',
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontSize: isMobile ? 14 : 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '${snapshot.error}',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: isMobile ? 12 : 14,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            setState(() {}); // Retry
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: evsuRed,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 );
               }
 
               if (!snapshot.hasData || !snapshot.data!['success']) {
-                return const Center(child: Text('No service accounts found'));
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.business_center_outlined,
+                          color: Colors.grey.shade400,
+                          size: 48,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No service accounts found',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: isMobile ? 14 : 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          snapshot.data?['message'] ??
+                              'No service accounts have been registered yet',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: isMobile ? 12 : 14,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
               }
 
               final services = List<Map<String, dynamic>>.from(
@@ -654,8 +819,37 @@ class _VendorsTabState extends State<VendorsTab> {
               );
 
               if (services.isEmpty) {
-                return const Center(
-                  child: Text('No service accounts available'),
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.business_center_outlined,
+                          color: Colors.grey.shade400,
+                          size: 48,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No services available',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: isMobile ? 14 : 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Create your first service account to get started',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: isMobile ? 12 : 14,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
                 );
               }
 
@@ -678,160 +872,587 @@ class _VendorsTabState extends State<VendorsTab> {
   Widget _buildServiceManagementItem(Map<String, dynamic> service) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
+    final isSmallPhone = screenWidth < 400;
+
+    // Extract service data
+    final serviceName =
+        service['service_name']?.toString() ?? 'Unknown Service';
+    final serviceCategory =
+        service['service_category']?.toString() ?? 'No Category';
+    final operationalType = service['operational_type']?.toString() ?? 'Main';
+    final isActive = service['is_active'] == true;
+    final contactPerson = service['contact_person']?.toString() ?? 'N/A';
+    final email = service['email']?.toString() ?? 'N/A';
+    final phone = service['phone']?.toString() ?? 'N/A';
+    final username = service['username']?.toString() ?? 'N/A';
+    final scannerId = service['scanner_id']?.toString();
+    final balance =
+        service['balance'] != null
+            ? (service['balance'] is num
+                ? (service['balance'] as num).toDouble()
+                : double.tryParse(service['balance'].toString()) ?? 0.0)
+            : null;
+    final mainServiceName = service['main_service_name']?.toString();
+    final isMainAccount = operationalType == 'Main';
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: EdgeInsets.all(isMobile ? 16 : 20),
+      margin: EdgeInsets.only(bottom: isMobile ? 12 : 16),
       decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isActive ? Colors.green.shade200 : Colors.grey.shade300,
+          width: isActive ? 1.5 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      service['service_name'] ?? 'Unknown Service',
-                      style: TextStyle(
-                        fontSize: isMobile ? 16 : 18,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      service['service_category'] ?? 'No Category',
-                      style: TextStyle(
-                        fontSize: isMobile ? 12 : 14,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
+          // Header Section
+          Container(
+            padding: EdgeInsets.all(isSmallPhone ? 12 : (isMobile ? 14 : 20)),
+            decoration: BoxDecoration(
+              color: isMainAccount ? Colors.blue.shade50 : Colors.grey.shade50,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(12),
+                topRight: Radius.circular(12),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color:
-                      service['is_active'] == true ? Colors.green : Colors.red,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  service['is_active'] == true ? 'Active' : 'Inactive',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          // Service details
-          Row(
-            children: [
-              Icon(Icons.location_on, size: 16, color: Colors.grey.shade600),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  service['location'] ?? 'No location specified',
-                  style: TextStyle(
-                    fontSize: isMobile ? 12 : 14,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          if (service['scanner_id'] != null &&
-              service['scanner_id'].toString().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Row(
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.bluetooth, size: 16, color: Colors.blue.shade600),
-                const SizedBox(width: 4),
-                Text(
-                  'Scanner: ${service['scanner_id']}',
-                  style: TextStyle(
-                    fontSize: isMobile ? 12 : 14,
-                    color: Colors.blue.shade600,
-                    fontWeight: FontWeight.w500,
+                // Service Icon
+                Container(
+                  padding: EdgeInsets.all(isSmallPhone ? 8 : 10),
+                  decoration: BoxDecoration(
+                    color:
+                        isMainAccount
+                            ? Colors.blue.shade100
+                            : Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    isMainAccount
+                        ? Icons.account_balance
+                        : Icons.subdirectory_arrow_right,
+                    color:
+                        isMainAccount
+                            ? Colors.blue.shade700
+                            : Colors.grey.shade700,
+                    size: isSmallPhone ? 18 : (isMobile ? 20 : 24),
+                  ),
+                ),
+                SizedBox(width: isSmallPhone ? 8 : 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              serviceName,
+                              style: TextStyle(
+                                fontSize:
+                                    isSmallPhone ? 14 : (isMobile ? 16 : 18),
+                                fontWeight: FontWeight.w700,
+                                color: Colors.black87,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          SizedBox(width: isSmallPhone ? 4 : 8),
+                          // Status Badge
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: isSmallPhone ? 8 : 10,
+                              vertical: isSmallPhone ? 4 : 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color:
+                                  isActive ? Colors.green : Colors.red.shade100,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  isActive ? Icons.check_circle : Icons.cancel,
+                                  size: isSmallPhone ? 12 : 14,
+                                  color:
+                                      isActive
+                                          ? Colors.white
+                                          : Colors.red.shade700,
+                                ),
+                                SizedBox(width: isSmallPhone ? 2 : 4),
+                                Text(
+                                  isActive ? 'Active' : 'Inactive',
+                                  style: TextStyle(
+                                    color:
+                                        isActive
+                                            ? Colors.white
+                                            : Colors.red.shade700,
+                                    fontSize: isSmallPhone ? 10 : 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: isSmallPhone ? 4 : 6),
+                      Row(
+                        children: [
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: isSmallPhone ? 6 : 8,
+                              vertical: isSmallPhone ? 3 : 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color:
+                                  isMainAccount
+                                      ? Colors.blue.shade100
+                                      : Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              isMainAccount ? 'MAIN' : 'SUB',
+                              style: TextStyle(
+                                color:
+                                    isMainAccount
+                                        ? Colors.blue.shade700
+                                        : Colors.grey.shade700,
+                                fontSize: isSmallPhone ? 9 : 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: isSmallPhone ? 6 : 8),
+                          Flexible(
+                            child: Text(
+                              serviceCategory,
+                              style: TextStyle(
+                                fontSize:
+                                    isSmallPhone ? 11 : (isMobile ? 12 : 13),
+                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-          ],
+          ),
 
-          const SizedBox(height: 12),
+          // Details Section
+          Padding(
+            padding: EdgeInsets.all(isSmallPhone ? 12 : (isMobile ? 14 : 20)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Contact Information
+                _buildDetailRow(
+                  icon: Icons.person,
+                  label: 'Contact',
+                  value: contactPerson,
+                  isMobile: isMobile,
+                  isSmallPhone: isSmallPhone,
+                ),
+                SizedBox(height: isSmallPhone ? 8 : 10),
+                _buildDetailRow(
+                  icon: Icons.email,
+                  label: 'Email',
+                  value: email,
+                  isMobile: isMobile,
+                  isSmallPhone: isSmallPhone,
+                ),
+                SizedBox(height: isSmallPhone ? 8 : 10),
+                _buildDetailRow(
+                  icon: Icons.phone,
+                  label: 'Phone',
+                  value: phone,
+                  isMobile: isMobile,
+                  isSmallPhone: isSmallPhone,
+                ),
+                SizedBox(height: isSmallPhone ? 8 : 10),
+                _buildDetailRow(
+                  icon: Icons.account_circle,
+                  label: 'Username',
+                  value: username,
+                  isMobile: isMobile,
+                  isSmallPhone: isSmallPhone,
+                ),
 
-          // Action buttons
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _editServiceAccount(service),
-                  icon: const Icon(Icons.edit, size: 16),
-                  label: const Text('Edit'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: evsuRed,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(vertical: isMobile ? 8 : 12),
+                // Additional Information
+                if (isMainAccount && balance != null) ...[
+                  SizedBox(height: isSmallPhone ? 8 : 10),
+                  Container(
+                    padding: EdgeInsets.all(isSmallPhone ? 10 : 12),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.green.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.account_balance_wallet,
+                          color: Colors.green.shade700,
+                          size: isSmallPhone ? 18 : 20,
+                        ),
+                        SizedBox(width: isSmallPhone ? 6 : 8),
+                        Flexible(
+                          child: Text(
+                            'Balance: ',
+                            style: TextStyle(
+                              fontSize:
+                                  isSmallPhone ? 11 : (isMobile ? 12 : 13),
+                              color: Colors.grey.shade700,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        Flexible(
+                          child: Text(
+                            '₱${balance.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize:
+                                  isSmallPhone ? 13 : (isMobile ? 14 : 16),
+                              color: Colors.green.shade700,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else if (!isMainAccount && mainServiceName != null) ...[
+                  SizedBox(height: isSmallPhone ? 8 : 10),
+                  _buildDetailRow(
+                    icon: Icons.link,
+                    label: 'Connected to',
+                    value: mainServiceName,
+                    isMobile: isMobile,
+                    isSmallPhone: isSmallPhone,
+                  ),
+                ],
+
+                // Always show scanner assignment
+                SizedBox(height: isSmallPhone ? 8 : 10),
+                Container(
+                  padding: EdgeInsets.all(isSmallPhone ? 10 : 12),
+                  decoration: BoxDecoration(
+                    color:
+                        (scannerId != null && scannerId.isNotEmpty)
+                            ? Colors.blue.shade50
+                            : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color:
+                          (scannerId != null && scannerId.isNotEmpty)
+                              ? Colors.blue.shade200
+                              : Colors.grey.shade300,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.bluetooth,
+                        color:
+                            (scannerId != null && scannerId.isNotEmpty)
+                                ? Colors.blue.shade700
+                                : Colors.grey.shade600,
+                        size: isSmallPhone ? 16 : (isMobile ? 18 : 20),
+                      ),
+                      SizedBox(width: isSmallPhone ? 6 : 8),
+                      Flexible(
+                        child: Text(
+                          'Scanner: ',
+                          style: TextStyle(
+                            fontSize: isSmallPhone ? 11 : (isMobile ? 12 : 13),
+                            color: Colors.grey.shade700,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      Flexible(
+                        child: Text(
+                          (scannerId != null && scannerId.isNotEmpty)
+                              ? scannerId
+                              : 'Not assigned',
+                          style: TextStyle(
+                            fontSize: isSmallPhone ? 11 : (isMobile ? 12 : 13),
+                            color:
+                                (scannerId != null && scannerId.isNotEmpty)
+                                    ? Colors.blue.shade700
+                                    : Colors.grey.shade600,
+                            fontWeight: FontWeight.w600,
+                            fontFamily:
+                                (scannerId != null && scannerId.isNotEmpty)
+                                    ? 'monospace'
+                                    : null,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+              ],
+            ),
+          ),
+
+          // Action Buttons Section
+          Container(
+            padding: EdgeInsets.all(isSmallPhone ? 10 : (isMobile ? 12 : 16)),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(12),
+                bottomRight: Radius.circular(12),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _toggleServiceStatus(service),
-                  icon: Icon(
-                    service['is_active'] == true
-                        ? Icons.pause
-                        : Icons.play_arrow,
-                    size: 16,
-                  ),
-                  label: Text(
-                    service['is_active'] == true ? 'Deactivate' : 'Activate',
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        service['is_active'] == true
-                            ? Colors.orange
-                            : Colors.green,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(vertical: isMobile ? 8 : 12),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _deleteServiceAccount(service),
-                  icon: const Icon(Icons.delete, size: 16),
-                  label: const Text('Delete'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(vertical: isMobile ? 8 : 12),
-                  ),
-                ),
-              ),
-            ],
+            ),
+            child:
+                isMobile
+                    ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _editServiceAccount(service),
+                            icon: Icon(
+                              Icons.edit,
+                              size: isSmallPhone ? 16 : 18,
+                            ),
+                            label: Text(
+                              isSmallPhone ? 'Edit' : 'Edit Service',
+                              style: TextStyle(
+                                fontSize: isSmallPhone ? 13 : 14,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: evsuRed,
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.symmetric(
+                                vertical: isSmallPhone ? 12 : 14,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              elevation: 2,
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: isSmallPhone ? 6 : 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _toggleServiceStatus(service),
+                                icon: Icon(
+                                  isActive ? Icons.pause : Icons.play_arrow,
+                                  size: isSmallPhone ? 16 : 18,
+                                ),
+                                label: Text(
+                                  isActive ? 'Deactivate' : 'Activate',
+                                  style: TextStyle(
+                                    fontSize: isSmallPhone ? 12 : 13,
+                                  ),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor:
+                                      isActive ? Colors.orange : Colors.green,
+                                  side: BorderSide(
+                                    color:
+                                        isActive ? Colors.orange : Colors.green,
+                                    width: 1.5,
+                                  ),
+                                  padding: EdgeInsets.symmetric(
+                                    vertical: isSmallPhone ? 10 : 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: isSmallPhone ? 6 : 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => _deleteServiceAccount(service),
+                                icon: Icon(
+                                  Icons.delete,
+                                  size: isSmallPhone ? 16 : 18,
+                                ),
+                                label: Text(
+                                  'Delete',
+                                  style: TextStyle(
+                                    fontSize: isSmallPhone ? 12 : 13,
+                                  ),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.red,
+                                  side: const BorderSide(
+                                    color: Colors.red,
+                                    width: 1.5,
+                                  ),
+                                  padding: EdgeInsets.symmetric(
+                                    vertical: isSmallPhone ? 10 : 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    )
+                    : Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () => _editServiceAccount(service),
+                            icon: const Icon(Icons.edit, size: 18),
+                            label: const Text('Edit'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: evsuRed,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              elevation: 2,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => _toggleServiceStatus(service),
+                            icon: Icon(
+                              isActive ? Icons.pause : Icons.play_arrow,
+                              size: 18,
+                            ),
+                            label: Text(isActive ? 'Deactivate' : 'Activate'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor:
+                                  isActive ? Colors.orange : Colors.green,
+                              side: BorderSide(
+                                color: isActive ? Colors.orange : Colors.green,
+                                width: 1.5,
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => _deleteServiceAccount(service),
+                            icon: const Icon(Icons.delete, size: 18),
+                            label: const Text('Delete'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red,
+                              side: const BorderSide(
+                                color: Colors.red,
+                                width: 1.5,
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
           ),
         ],
       ),
     );
   }
 
+  // Helper widget for detail rows
+  Widget _buildDetailRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    required bool isMobile,
+    bool isSmallPhone = false,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          icon,
+          size: isSmallPhone ? 16 : (isMobile ? 17 : 18),
+          color: Colors.grey.shade600,
+        ),
+        SizedBox(width: isSmallPhone ? 6 : 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: isSmallPhone ? 10 : (isMobile ? 11 : 12),
+                  color: Colors.grey.shade500,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              SizedBox(height: isSmallPhone ? 1 : 2),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: isSmallPhone ? 12 : (isMobile ? 13 : 14),
+                  color: Colors.black87,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   void _editServiceAccount(Map<String, dynamic> service) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
     final nameCtrl = TextEditingController(text: service['service_name'] ?? '');
     final contactCtrl = TextEditingController(
       text: service['contact_person'] ?? '',
@@ -853,76 +1474,237 @@ class _VendorsTabState extends State<VendorsTab> {
         return StatefulBuilder(
           builder: (context, setStateDialog) {
             return AlertDialog(
-              title: const Text('Edit Service Account'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: nameCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Service Name',
-                        border: OutlineInputBorder(),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: Row(
+                children: [
+                  Icon(Icons.edit, color: evsuRed, size: 24),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Edit Service Account',
+                      style: TextStyle(
+                        fontSize: isMobile ? 18 : 20,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: contactCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Contact Person',
-                        border: OutlineInputBorder(),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: isMobile ? double.infinity : 500,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Service Name
+                      TextField(
+                        controller: nameCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'Service Name',
+                          prefixIcon: const Icon(
+                            Icons.business,
+                            color: evsuRed,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                              color: evsuRed,
+                              width: 2,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: emailCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Email',
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 16),
+                      // Contact Person
+                      TextField(
+                        controller: contactCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'Contact Person',
+                          prefixIcon: const Icon(Icons.person, color: evsuRed),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                              color: evsuRed,
+                              width: 2,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: phoneCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Phone',
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 16),
+                      // Email
+                      TextField(
+                        controller: emailCtrl,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: InputDecoration(
+                          labelText: 'Email Address',
+                          prefixIcon: const Icon(Icons.email, color: evsuRed),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                              color: evsuRed,
+                              width: 2,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: usernameCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Username',
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 16),
+                      // Phone
+                      TextField(
+                        controller: phoneCtrl,
+                        keyboardType: TextInputType.phone,
+                        decoration: InputDecoration(
+                          labelText: 'Phone Number',
+                          prefixIcon: const Icon(Icons.phone, color: evsuRed),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                              color: evsuRed,
+                              width: 2,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: scannerCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Scanner ID (optional)',
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 16),
+                      // Username
+                      TextField(
+                        controller: usernameCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'Username',
+                          prefixIcon: const Icon(
+                            Icons.account_circle,
+                            color: evsuRed,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                              color: evsuRed,
+                              width: 2,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: commissionCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Commission Rate (%)',
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 16),
+                      // Scanner ID
+                      TextField(
+                        controller: scannerCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'Scanner ID (Optional)',
+                          prefixIcon: const Icon(
+                            Icons.qr_code_scanner,
+                            color: evsuRed,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                              color: evsuRed,
+                              width: 2,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          helperText: 'Leave empty if no scanner assigned',
+                          helperStyle: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 16),
+                      // Commission Rate
+                      TextField(
+                        controller: commissionCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: 'Commission Rate (%)',
+                          prefixIcon: const Icon(Icons.percent, color: evsuRed),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                              color: evsuRed,
+                              width: 2,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          helperText: 'Enter commission rate as percentage',
+                          helperStyle: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               actions: [
                 TextButton(
                   onPressed: saving ? null : () => Navigator.pop(context),
-                  child: const Text('Cancel'),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
-                ElevatedButton(
+                ElevatedButton.icon(
                   onPressed:
                       saving
                           ? null
@@ -948,23 +1730,60 @@ class _VendorsTabState extends State<VendorsTab> {
                               if (mounted) {
                                 Navigator.pop(context);
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'Service updated successfully',
+                                  SnackBar(
+                                    content: const Row(
+                                      children: [
+                                        Icon(
+                                          Icons.check_circle,
+                                          color: Colors.white,
+                                        ),
+                                        SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            'Service updated successfully',
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                     backgroundColor: Colors.green,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
                                   ),
                                 );
                                 setState(() {}); // refresh list
                               }
                             } else {
                               if (mounted) {
+                                // Improve error handling for duplicate email
+                                final errorMessage =
+                                    result['message'] ?? result['error'] ?? '';
+                                final errorLower = errorMessage.toLowerCase();
+
+                                String errorText =
+                                    'Update failed: $errorMessage';
+                                if (errorLower.contains('duplicate') ||
+                                    errorLower.contains('unique constraint') ||
+                                    errorLower.contains('already exists')) {
+                                  if (errorLower.contains('email')) {
+                                    errorText =
+                                        'Email already exists: ${emailCtrl.text.trim()}\n\nThis email is already registered. Please use a different email address.';
+                                  } else if (errorLower.contains('username')) {
+                                    errorText =
+                                        'Username already exists: ${usernameCtrl.text.trim()}\n\nThis username is already taken. Please choose a different username.';
+                                  }
+                                }
+
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text(
-                                      'Update failed: ${result['message']}',
-                                    ),
+                                    content: Text(errorText),
                                     backgroundColor: Colors.red,
+                                    duration: const Duration(seconds: 5),
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
                                   ),
                                 );
                               }
@@ -973,18 +1792,30 @@ class _VendorsTabState extends State<VendorsTab> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: evsuRed,
                     foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    elevation: 2,
                   ),
-                  child:
+                  icon:
                       saving
                           ? const SizedBox(
-                            width: 18,
-                            height: 18,
+                            width: 16,
+                            height: 16,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
                               color: Colors.white,
                             ),
                           )
-                          : const Text('Save'),
+                          : const Icon(Icons.save, size: 18),
+                  label: Text(
+                    saving ? 'Saving...' : 'Save Changes',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ),
               ],
             );
@@ -995,21 +1826,109 @@ class _VendorsTabState extends State<VendorsTab> {
   }
 
   void _toggleServiceStatus(Map<String, dynamic> service) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
     final bool newStatus = !(service['is_active'] == true);
+    final serviceName =
+        service['service_name']?.toString() ?? 'Unknown Service';
+
     showDialog(
       context: context,
       builder:
           (context) => AlertDialog(
-            title: Text(newStatus ? 'Activate Service' : 'Deactivate Service'),
-            content: Text(
-              'Are you sure you want to ${newStatus ? 'activate' : 'deactivate'} "${service['service_name']}"?',
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: Row(
+              children: [
+                Icon(
+                  newStatus ? Icons.play_circle : Icons.pause_circle,
+                  color: newStatus ? Colors.green : Colors.orange,
+                  size: 24,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    newStatus ? 'Activate Service' : 'Deactivate Service',
+                    style: TextStyle(
+                      fontSize: isMobile ? 18 : 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Are you sure you want to ${newStatus ? 'activate' : 'deactivate'} this service?',
+                  style: TextStyle(fontSize: isMobile ? 14 : 16),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color:
+                        newStatus
+                            ? Colors.green.shade50
+                            : Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color:
+                          newStatus
+                              ? Colors.green.shade200
+                              : Colors.orange.shade200,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.business,
+                        color:
+                            newStatus
+                                ? Colors.green.shade700
+                                : Colors.orange.shade700,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          serviceName,
+                          style: TextStyle(
+                            fontSize: isMobile ? 13 : 14,
+                            fontWeight: FontWeight.w600,
+                            color:
+                                newStatus
+                                    ? Colors.green.shade900
+                                    : Colors.orange.shade900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                ),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(
+                    color: Colors.grey.shade700,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-              TextButton(
+              ElevatedButton.icon(
                 onPressed: () async {
                   Navigator.pop(context);
                   final result = await SupabaseService.updateServiceAccount(
@@ -1020,10 +1939,27 @@ class _VendorsTabState extends State<VendorsTab> {
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text(
-                            'Service ${newStatus ? 'activated' : 'deactivated'} successfully',
+                          content: Row(
+                            children: [
+                              Icon(
+                                newStatus
+                                    ? Icons.check_circle
+                                    : Icons.pause_circle,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Service ${newStatus ? 'activated' : 'deactivated'} successfully',
+                                ),
+                              ),
+                            ],
                           ),
                           backgroundColor: Colors.green,
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       );
                       setState(() {});
@@ -1036,12 +1972,32 @@ class _VendorsTabState extends State<VendorsTab> {
                             'Operation failed: ${result['message']}',
                           ),
                           backgroundColor: Colors.red,
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       );
                     }
                   }
                 },
-                child: Text(newStatus ? 'Activate' : 'Deactivate'),
+                icon: Icon(
+                  newStatus ? Icons.play_arrow : Icons.pause,
+                  size: 18,
+                ),
+                label: Text(newStatus ? 'Activate' : 'Deactivate'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: newStatus ? Colors.green : Colors.orange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  elevation: 2,
+                ),
               ),
             ],
           ),
@@ -1049,20 +2005,120 @@ class _VendorsTabState extends State<VendorsTab> {
   }
 
   void _deleteServiceAccount(Map<String, dynamic> service) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final serviceName =
+        service['service_name']?.toString() ?? 'Unknown Service';
+
     showDialog(
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('Delete Service Account'),
-            content: Text(
-              'Are you sure you want to delete "${service['service_name']}"? This action cannot be undone.',
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: Row(
+              children: [
+                const Icon(Icons.warning, color: Colors.red, size: 24),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Delete Service Account',
+                    style: TextStyle(
+                      fontSize: isMobile ? 18 : 20,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.red.shade700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Are you sure you want to delete this service account?',
+                  style: TextStyle(fontSize: isMobile ? 14 : 16),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.business,
+                        color: Colors.red.shade700,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          serviceName,
+                          style: TextStyle(
+                            fontSize: isMobile ? 13 : 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.red.shade900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.shade200),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.orange.shade700,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'This action cannot be undone. All associated data will be permanently deleted.',
+                          style: TextStyle(
+                            fontSize: isMobile ? 12 : 13,
+                            color: Colors.orange.shade900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                ),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(
+                    color: Colors.grey.shade700,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-              TextButton(
+              ElevatedButton.icon(
                 onPressed: () async {
                   Navigator.pop(context);
                   final result = await SupabaseService.deleteServiceAccount(
@@ -1071,9 +2127,23 @@ class _VendorsTabState extends State<VendorsTab> {
                   if (result['success'] == true) {
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Service account deleted successfully'),
+                        SnackBar(
+                          content: const Row(
+                            children: [
+                              Icon(Icons.check_circle, color: Colors.white),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Service account deleted successfully',
+                                ),
+                              ),
+                            ],
+                          ),
                           backgroundColor: Colors.green,
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       );
                       setState(() {});
@@ -1084,14 +2154,28 @@ class _VendorsTabState extends State<VendorsTab> {
                         SnackBar(
                           content: Text('Delete failed: ${result['message']}'),
                           backgroundColor: Colors.red,
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       );
                     }
                   }
                 },
-                child: const Text(
-                  'Delete',
-                  style: TextStyle(color: Colors.red),
+                icon: const Icon(Icons.delete, size: 18),
+                label: const Text('Delete'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  elevation: 2,
                 ),
               ),
             ],
@@ -1580,38 +2664,6 @@ class _VendorsTabState extends State<VendorsTab> {
 
   // Additional helper methods for service management
   Widget _buildServiceList() {
-    // This will be populated from database in a real implementation
-    final services = [
-      {
-        'name': 'Campus Cafeteria',
-        'status': 'Active',
-        'type': 'Food Service',
-        'operational_type': 'Main',
-        'balance': 1250.50,
-      },
-      {
-        'name': 'IGP Printing',
-        'status': 'Active',
-        'type': 'Print Shop',
-        'operational_type': 'Sub',
-        'main_service': 'Campus Cafeteria',
-      },
-      {
-        'name': 'Student Store',
-        'status': 'Active',
-        'type': 'Retail',
-        'operational_type': 'Main',
-        'balance': 890.25,
-      },
-      {
-        'name': 'Library Services',
-        'status': 'Active',
-        'type': 'Educational',
-        'operational_type': 'Main',
-        'balance': 2100.75,
-      },
-    ];
-
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
 
@@ -1643,15 +2695,151 @@ class _VendorsTabState extends State<VendorsTab> {
           ),
           SizedBox(height: isMobile ? 12 : 16),
 
-          ...services.map((service) => _buildServiceListItem(service)).toList(),
+          // Use FutureBuilder to load real data from database
+          FutureBuilder<Map<String, dynamic>>(
+            future: SupabaseService.getServiceAccounts(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24.0),
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+              }
+
+              if (snapshot.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      children: [
+                        Icon(Icons.error_outline, color: Colors.red, size: 48),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Error loading services',
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontSize: isMobile ? 14 : 16,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '${snapshot.error}',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: isMobile ? 12 : 14,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              if (!snapshot.hasData || !snapshot.data!['success']) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.business_center_outlined,
+                          color: Colors.grey.shade400,
+                          size: 48,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No services found',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: isMobile ? 14 : 16,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          snapshot.data?['message'] ??
+                              'No service accounts have been registered yet',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: isMobile ? 12 : 14,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              final services = List<Map<String, dynamic>>.from(
+                snapshot.data!['data'],
+              );
+
+              if (services.isEmpty) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.business_center_outlined,
+                          color: Colors.grey.shade400,
+                          size: 48,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'No services registered',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: isMobile ? 14 : 16,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Create your first service account to get started',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: isMobile ? 12 : 14,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              return Column(
+                children:
+                    services
+                        .map((service) => _buildServiceListItem(service))
+                        .toList(),
+              );
+            },
+          ),
         ],
       ),
     );
   }
 
   Widget _buildServiceListItem(Map<String, dynamic> service) {
-    final isActive = service['status'] == 'Active';
-    final isMainAccount = service['operational_type'] == 'Main';
+    // Map database fields to display
+    final serviceName =
+        service['service_name']?.toString() ?? 'Unknown Service';
+    final serviceCategory =
+        service['service_category']?.toString() ?? 'No Category';
+    final operationalType = service['operational_type']?.toString() ?? 'Main';
+    final isActive = service['is_active'] == true;
+    final isMainAccount = operationalType == 'Main';
+    final balance =
+        service['balance'] != null
+            ? (service['balance'] is num
+                ? (service['balance'] as num).toDouble()
+                : double.tryParse(service['balance'].toString()) ?? 0.0)
+            : null;
+    final mainServiceName = service['main_service_name']?.toString();
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
 
@@ -1685,13 +2873,16 @@ class _VendorsTabState extends State<VendorsTab> {
               children: [
                 Row(
                   children: [
-                    Text(
-                      service['name']!,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: isMobile ? 14 : 16,
+                    Expanded(
+                      child: Text(
+                        serviceName,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: isMobile ? 14 : 16,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                     if (isMainAccount) ...[
                       const SizedBox(width: 8),
@@ -1738,32 +2929,34 @@ class _VendorsTabState extends State<VendorsTab> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  service['type']!,
+                  serviceCategory,
                   style: TextStyle(
                     color: Colors.grey.shade600,
                     fontSize: isMobile ? 12 : 14,
                   ),
                   overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
-                if (isMainAccount && service['balance'] != null) ...[
+                if (isMainAccount && balance != null) ...[
                   const SizedBox(height: 4),
                   Text(
-                    'Balance: ₱${service['balance'].toStringAsFixed(2)}',
+                    'Balance: ₱${balance.toStringAsFixed(2)}',
                     style: TextStyle(
                       color: Colors.blue.shade700,
                       fontSize: isMobile ? 11 : 12,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                ] else if (!isMainAccount &&
-                    service['main_service'] != null) ...[
+                ] else if (!isMainAccount && mainServiceName != null) ...[
                   const SizedBox(height: 4),
                   Text(
-                    'Connected to: ${service['main_service']}',
+                    'Connected to: $mainServiceName',
                     style: TextStyle(
                       color: Colors.grey.shade600,
                       fontSize: isMobile ? 11 : 12,
                     ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ],
               ],
@@ -1780,7 +2973,7 @@ class _VendorsTabState extends State<VendorsTab> {
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              service['status']!,
+              isActive ? 'Active' : 'Inactive',
               style: TextStyle(
                 color:
                     isActive ? Colors.green.shade700 : Colors.orange.shade700,
@@ -3696,24 +4889,58 @@ class _VendorsTabState extends State<VendorsTab> {
         phone: _phoneController.text.trim(),
         username: _usernameController.text.trim(),
         password: _passwordController.text.trim(),
-        scannerId:
-            _scannerIdController.text.trim().isNotEmpty
-                ? _scannerIdController.text.trim()
-                : null,
-        commissionRate:
-            double.tryParse(_commissionRateController.text.trim()) ?? 0.0,
+        scannerId: null, // Scanner ID removed from form
+        commissionRate: 0.0, // Commission rate removed from form
       );
 
       if (result['success']) {
         _showSuccessDialog('Service account created successfully!');
         _clearForm();
+        // Refresh service list after successful creation
+        setState(() {});
       } else {
-        _showErrorDialog(
-          'Failed to create service account: ${result['message']}',
-        );
+        // Improve error handling for duplicate email
+        final errorMessage = result['message'] ?? result['error'] ?? '';
+        final errorLower = errorMessage.toLowerCase();
+
+        if (errorLower.contains('duplicate') ||
+            errorLower.contains('unique constraint') ||
+            errorLower.contains('already exists')) {
+          if (errorLower.contains('email')) {
+            _showErrorDialog(
+              'Email already exists: ${_emailController.text.trim()}\n\nThis email is already registered in the database. Please use a different email address.',
+            );
+          } else if (errorLower.contains('username')) {
+            _showErrorDialog(
+              'Username already exists: ${_usernameController.text.trim()}\n\nThis username is already taken. Please choose a different username.',
+            );
+          } else {
+            _showErrorDialog(
+              'Account already exists: $errorMessage\n\nThis service account may already be registered. Please check the service list.',
+            );
+          }
+        } else {
+          _showErrorDialog('Failed to create service account: $errorMessage');
+        }
       }
     } catch (e) {
-      _showErrorDialog('Error creating service account: ${e.toString()}');
+      // Handle specific error types
+      final errorString = e.toString().toLowerCase();
+      if (errorString.contains('duplicate') ||
+          errorString.contains('unique constraint') ||
+          errorString.contains('already exists')) {
+        if (errorString.contains('email')) {
+          _showErrorDialog(
+            'Email already exists: ${_emailController.text.trim()}\n\nThis email is already registered in the database. Please use a different email address.',
+          );
+        } else {
+          _showErrorDialog(
+            'Error creating service account: $e\n\nThe account may already exist in the database.',
+          );
+        }
+      } else {
+        _showErrorDialog('Error creating service account: ${e.toString()}');
+      }
     } finally {
       setState(() {
         _isCreatingAccount = false;
@@ -3806,6 +5033,7 @@ class _VendorsTabState extends State<VendorsTab> {
     _phoneController.clear();
     _usernameController.clear();
     _passwordController.clear();
+    // Scanner ID and Commission Rate controllers removed from form
     _scannerIdController.clear();
     _commissionRateController.clear();
 
@@ -4784,27 +6012,47 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final isSmallPhone = screenWidth < 400;
+
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(isSmallPhone ? 8 : (isMobile ? 10 : 12)),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.1),
+        color: Colors.white.withOpacity(0.15),
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withOpacity(0.3), width: 1),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 8),
+          Icon(
+            icon,
+            color: color,
+            size: isSmallPhone ? 16 : (isMobile ? 18 : 20),
+          ),
+          SizedBox(height: isSmallPhone ? 4 : (isMobile ? 5 : 6)),
           Text(
             value,
             style: TextStyle(
-              fontSize: 24,
+              fontSize: isSmallPhone ? 16 : (isMobile ? 18 : 20),
               fontWeight: FontWeight.bold,
               color: color,
             ),
           ),
-          Text(
-            title,
-            style: TextStyle(fontSize: 12, color: color.withOpacity(0.8)),
+          const SizedBox(height: 2),
+          Flexible(
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: isSmallPhone ? 8 : (isMobile ? 9 : 10),
+                color: color.withOpacity(0.9),
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ],
       ),

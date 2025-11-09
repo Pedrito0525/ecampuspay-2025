@@ -19,6 +19,11 @@ class _SettingsTabState extends State<SettingsTab> {
   int _selectedFunction = -1;
   bool _isUpdating = false;
 
+  // Reset Database state
+  bool _isResetting = false;
+  final TextEditingController _confirmPasswordController2 =
+      TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +54,7 @@ class _SettingsTabState extends State<SettingsTab> {
     _confirmPasswordController.dispose();
     _newFullNameController.dispose();
     _newEmailController.dispose();
+    _confirmPasswordController2.dispose();
     super.dispose();
   }
 
@@ -77,6 +83,8 @@ class _SettingsTabState extends State<SettingsTab> {
           // Show function detail if selected, otherwise show cards
           if (_selectedFunction == 0)
             _buildGeneralSettings()
+          else if (_selectedFunction == 1)
+            _buildResetDatabase()
           else
             // Function Cards
             LayoutBuilder(
@@ -137,8 +145,8 @@ class _SettingsTabState extends State<SettingsTab> {
                     ),
                     _buildFunctionCard(
                       icon: Icons.integration_instructions,
-                      title: 'API Configuration',
-                      description: 'Configure external API integrations',
+                      title: 'E-Wallet Payment QR',
+                      description: 'Configure QR Payment Options ',
                       color: Colors.teal,
                       onTap: () {
                         Navigator.push(
@@ -149,6 +157,13 @@ class _SettingsTabState extends State<SettingsTab> {
                           ),
                         );
                       },
+                    ),
+                    _buildFunctionCard(
+                      icon: Icons.delete_forever,
+                      title: 'Reset Database',
+                      description: 'Permanently delete all data and reset IDs',
+                      color: Colors.red.shade900,
+                      onTap: () => setState(() => _selectedFunction = 1),
                     ),
                   ],
                 );
@@ -472,22 +487,45 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   void _showSuccessDialog(String message) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
     showDialog(
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Row(
+            title: Row(
               children: [
-                Icon(Icons.check_circle, color: Colors.green),
-                SizedBox(width: 8),
-                Text('Success'),
+                Icon(
+                  Icons.check_circle,
+                  color: Colors.green,
+                  size: isMobile ? 24 : 28,
+                ),
+                SizedBox(width: isMobile ? 6 : 8),
+                Expanded(
+                  child: Text(
+                    'Success',
+                    style: TextStyle(fontSize: isMobile ? 18 : 20),
+                  ),
+                ),
               ],
             ),
-            content: Text(message),
+            content: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth:
+                    isMobile ? MediaQuery.of(context).size.width * 0.8 : 400,
+              ),
+              child: Text(
+                message,
+                style: TextStyle(fontSize: isMobile ? 14 : 16),
+              ),
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
+                child: Text(
+                  'OK',
+                  style: TextStyle(fontSize: isMobile ? 14 : 16),
+                ),
               ),
             ],
           ),
@@ -495,22 +533,43 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 
   void _showErrorDialog(String message) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
     showDialog(
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Row(
+            title: Row(
               children: [
-                Icon(Icons.error, color: Colors.red),
-                SizedBox(width: 8),
-                Text('Error'),
+                Icon(Icons.error, color: Colors.red, size: isMobile ? 24 : 28),
+                SizedBox(width: isMobile ? 6 : 8),
+                Expanded(
+                  child: Text(
+                    'Error',
+                    style: TextStyle(fontSize: isMobile ? 18 : 20),
+                  ),
+                ),
               ],
             ),
-            content: Text(message),
+            content: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth:
+                    isMobile ? MediaQuery.of(context).size.width * 0.8 : 400,
+              ),
+              child: SingleChildScrollView(
+                child: Text(
+                  message,
+                  style: TextStyle(fontSize: isMobile ? 14 : 16),
+                ),
+              ),
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
+                child: Text(
+                  'OK',
+                  style: TextStyle(fontSize: isMobile ? 14 : 16),
+                ),
               ),
             ],
           ),
@@ -589,5 +648,544 @@ class _SettingsTabState extends State<SettingsTab> {
         ),
       ),
     );
+  }
+
+  // Reset Database Screen
+  Widget _buildResetDatabase() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final isTablet = screenWidth >= 600 && screenWidth < 1024;
+
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 16 : (isTablet ? 20 : 24)),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with back button
+          Row(
+            children: [
+              IconButton(
+                onPressed: () => setState(() => _selectedFunction = -1),
+                icon: const Icon(Icons.arrow_back, color: evsuRed),
+                iconSize: isMobile ? 20 : 24,
+              ),
+              SizedBox(width: isMobile ? 4 : 8),
+              Icon(Icons.warning, color: Colors.red, size: isMobile ? 24 : 28),
+              SizedBox(width: isMobile ? 4 : 8),
+              Expanded(
+                child: Text(
+                  'Reset Database',
+                  style: TextStyle(
+                    fontSize: isMobile ? 20 : (isTablet ? 22 : 24),
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: isMobile ? 4 : 8),
+          Text(
+            'DANGER ZONE: This action is irreversible',
+            style: TextStyle(
+              fontSize: isMobile ? 12 : 14,
+              color: Colors.red,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          SizedBox(height: isMobile ? 20 : 30),
+
+          // Warning Banner
+          Container(
+            padding: EdgeInsets.all(isMobile ? 16 : 20),
+            decoration: BoxDecoration(
+              color: Colors.red.shade50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: Colors.red.shade300,
+                width: isMobile ? 1 : 2,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      color: Colors.red.shade700,
+                      size: isMobile ? 24 : 28,
+                    ),
+                    SizedBox(width: isMobile ? 8 : 12),
+                    Expanded(
+                      child: Text(
+                        'WARNING: Critical Operation',
+                        style: TextStyle(
+                          fontSize: isMobile ? 16 : (isTablet ? 17 : 18),
+                          fontWeight: FontWeight.w700,
+                          color: Colors.red.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: isMobile ? 12 : 16),
+                Text(
+                  'This action will permanently delete ALL data from the following tables:',
+                  style: TextStyle(
+                    fontSize: isMobile ? 13 : 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.red.shade900,
+                  ),
+                ),
+                SizedBox(height: isMobile ? 8 : 12),
+                _buildTableList(isMobile, isTablet),
+                SizedBox(height: isMobile ? 12 : 16),
+                Text(
+                  'All auto-increment IDs will be reset to 1.',
+                  style: TextStyle(
+                    fontSize: isMobile ? 13 : 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.red.shade900,
+                  ),
+                ),
+                SizedBox(height: isMobile ? 6 : 8),
+                Text(
+                  'This operation CANNOT be undone. Consider backing up your data before proceeding.',
+                  style: TextStyle(
+                    fontSize: isMobile ? 13 : 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.red.shade900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: isMobile ? 20 : 30),
+
+          // Backup Reminder
+          Container(
+            padding: EdgeInsets.all(isMobile ? 12 : 16),
+            decoration: BoxDecoration(
+              color: Colors.amber.shade50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.amber.shade300),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.backup,
+                  color: Colors.amber.shade700,
+                  size: isMobile ? 20 : 24,
+                ),
+                SizedBox(width: isMobile ? 8 : 12),
+                Expanded(
+                  child: Text(
+                    'RECOMMENDATION: Export and backup all data before proceeding with this operation.',
+                    style: TextStyle(
+                      fontSize: isMobile ? 13 : 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: isMobile ? 20 : 30),
+
+          // Reset Database Button
+          SizedBox(
+            width: double.infinity,
+            height: isMobile ? 45 : (isTablet ? 48 : 50),
+            child: ElevatedButton(
+              onPressed: _isResetting ? null : _showResetConfirmationDialog,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red.shade700,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child:
+                  _isResetting
+                      ? SizedBox(
+                        width: isMobile ? 18 : 20,
+                        height: isMobile ? 18 : 20,
+                        child: const CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                      : Text(
+                        'Reset Database',
+                        style: TextStyle(
+                          fontSize: isMobile ? 14 : (isTablet ? 15 : 16),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTableList(bool isMobile, bool isTablet) {
+    final tables = [
+      'loan_payments',
+      'service_transactions',
+      'top_up_transactions',
+      'user_transfers',
+      'withdrawal_transactions',
+      'payment_items',
+      'active_loans',
+      'auth_students',
+      'service_accounts',
+      // Note: service_hierarchy is a VIEW (not a table) - will be empty after deleting service_accounts
+      'top_up_requests',
+      // Note: top_up_transaction_summary is a VIEW (not a table) - will be empty after deleting top_up_transactions
+    ];
+
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 10 : 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.red.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children:
+            tables
+                .map(
+                  (table) => Padding(
+                    padding: EdgeInsets.symmetric(vertical: isMobile ? 3 : 4),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.table_chart,
+                          size: isMobile ? 14 : 16,
+                          color: Colors.red.shade700,
+                        ),
+                        SizedBox(width: isMobile ? 6 : 8),
+                        Expanded(
+                          child: Text(
+                            table,
+                            style: TextStyle(
+                              fontSize: isMobile ? 12 : 13,
+                              fontFamily: 'monospace',
+                              color: Colors.red.shade900,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(),
+      ),
+    );
+  }
+
+  Future<void> _showResetConfirmationDialog() async {
+    _confirmPasswordController2.clear();
+    int cooldownSeconds = 5;
+
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            // Start countdown timer if not already started
+            if (cooldownSeconds == 5) {
+              _startCooldownTimerForDialog(setDialogState, (newValue) {
+                cooldownSeconds = newValue;
+              }, cooldownSeconds);
+            }
+
+            return AlertDialog(
+              title: Row(
+                children: [
+                  Icon(Icons.warning, color: Colors.red.shade700, size: 28),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Confirm Reset Database',
+                      style: TextStyle(
+                        fontSize:
+                            MediaQuery.of(context).size.width < 600 ? 18 : 20,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth:
+                      MediaQuery.of(context).size.width < 600
+                          ? MediaQuery.of(context).size.width * 0.9
+                          : 500,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'This will permanently delete ALL data from ALL system tables and reset their IDs. This action CANNOT be undone.',
+                        style: TextStyle(
+                          fontSize:
+                              MediaQuery.of(context).size.width < 600 ? 13 : 14,
+                          color: Colors.red.shade900,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        'For security, please enter your admin password to confirm:',
+                        style: TextStyle(
+                          fontSize:
+                              MediaQuery.of(context).size.width < 600 ? 13 : 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _confirmPasswordController2,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText: 'Admin Password',
+                          labelStyle: TextStyle(
+                            fontSize:
+                                MediaQuery.of(context).size.width < 600
+                                    ? 13
+                                    : 14,
+                          ),
+                          prefixIcon: const Icon(Icons.lock, color: evsuRed),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(
+                              color: evsuRed,
+                              width: 2,
+                            ),
+                          ),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical:
+                                MediaQuery.of(context).size.width < 600
+                                    ? 12
+                                    : 16,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      if (cooldownSeconds > 0)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.orange.shade300),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.timer,
+                                color: Colors.orange.shade700,
+                                size:
+                                    MediaQuery.of(context).size.width < 600
+                                        ? 20
+                                        : 24,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Please wait $cooldownSeconds seconds before confirming...',
+                                  style: TextStyle(
+                                    fontSize:
+                                        MediaQuery.of(context).size.width < 600
+                                            ? 12
+                                            : 13,
+                                    color: Colors.orange.shade900,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                  },
+                  child: Text(
+                    'Cancel',
+                    style: TextStyle(
+                      fontSize:
+                          MediaQuery.of(context).size.width < 600 ? 13 : 14,
+                    ),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed:
+                      cooldownSeconds > 0
+                          ? null
+                          : () {
+                            Navigator.of(context).pop();
+                            _performDatabaseReset();
+                          },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade700,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(
+                      horizontal:
+                          MediaQuery.of(context).size.width < 600 ? 16 : 20,
+                      vertical:
+                          MediaQuery.of(context).size.width < 600 ? 10 : 12,
+                    ),
+                  ),
+                  child: Text(
+                    'Confirm Reset',
+                    style: TextStyle(
+                      fontSize:
+                          MediaQuery.of(context).size.width < 600 ? 13 : 14,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _startCooldownTimerForDialog(
+    StateSetter setDialogState,
+    Function(int) updateCooldown,
+    int currentSeconds,
+  ) {
+    if (currentSeconds > 0) {
+      Future.delayed(const Duration(seconds: 1), () {
+        final newSeconds = currentSeconds - 1;
+        setDialogState(() {
+          updateCooldown(newSeconds);
+        });
+
+        if (newSeconds > 0) {
+          _startCooldownTimerForDialog(
+            setDialogState,
+            updateCooldown,
+            newSeconds,
+          );
+        }
+      });
+    }
+  }
+
+  Future<void> _performDatabaseReset() async {
+    // Validate password
+    if (_confirmPasswordController2.text.trim().isEmpty) {
+      _showErrorDialog('Please enter your admin password to confirm.');
+      return;
+    }
+
+    setState(() {
+      _isResetting = true;
+    });
+
+    try {
+      print('=== DEBUG: Reset Database Started ===');
+      print(
+        'DEBUG: Password entered: ${_confirmPasswordController2.text.trim()}',
+      );
+
+      // Get current admin info for authentication
+      print('DEBUG: Fetching admin info...');
+      final adminData = await SupabaseService.getCurrentAdminInfo();
+
+      print('DEBUG: Admin data response: ${adminData['success']}');
+      if (adminData['success']) {
+        print(
+          'DEBUG: Admin username from DB: ${adminData['data']['username']}',
+        );
+        print('DEBUG: Admin data keys: ${adminData['data'].keys.toList()}');
+      } else {
+        print('DEBUG: Failed to get admin data: ${adminData['message']}');
+        print('DEBUG: Error: ${adminData['error']}');
+      }
+
+      if (!adminData['success']) {
+        _showErrorDialog(
+          'Failed to verify admin credentials.\nError: ${adminData['message']}',
+        );
+        return;
+      }
+
+      // Call the reset database function with password verification
+      print('DEBUG: Calling resetDatabase with:');
+      print('  - username: ${adminData['data']['username']}');
+      print(
+        '  - password length: ${_confirmPasswordController2.text.trim().length}',
+      );
+
+      final result = await SupabaseService.resetDatabase(
+        adminPassword: _confirmPasswordController2.text.trim(),
+        adminUsername: adminData['data']['username'],
+      );
+
+      print('DEBUG: Reset result: ${result['success']}');
+      print('DEBUG: Reset message: ${result['message']}');
+      if (!result['success']) {
+        print('DEBUG: Reset error: ${result['error']}');
+      }
+      print('=== DEBUG: Reset Database Completed ===');
+
+      if (result['success']) {
+        _showSuccessDialog(
+          'Database has been successfully reset. All data has been deleted and IDs have been reset.',
+        );
+        _confirmPasswordController2.clear();
+      } else {
+        _showErrorDialog(
+          result['message'] ?? 'Failed to reset database. Please try again.',
+        );
+      }
+    } catch (e) {
+      print('DEBUG: Exception caught: $e');
+      print('DEBUG: Exception type: ${e.runtimeType}');
+      _showErrorDialog('Error resetting database: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResetting = false;
+        });
+      }
+    }
   }
 }

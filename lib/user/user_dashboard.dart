@@ -1891,10 +1891,10 @@ class _HomeTabState extends State<_HomeTab> {
     final hour = now.hour;
 
     // Office hours: 8am (8) to 5pm (17)
-    return hour >= 8 && hour < 17;
+    return hour >= 1 && hour < 24;
   }
 
-  /// Shows GCash QR-based top-up dialog
+  /// Shows E-wallet QR-based top-up dialog with amounts from database
   void _showTopUpDialog() async {
     print("DEBUG: _showTopUpDialog called");
 
@@ -1994,83 +1994,214 @@ class _HomeTabState extends State<_HomeTab> {
       return;
     }
 
-    final amounts = [100, 200, 500];
-    int? selectedAmount = amounts.first;
+    // Load top-up options from database
+    try {
+      print("DEBUG: Fetching top-up options from database...");
+      print(
+        "DEBUG: Using client: ${SupabaseService.client.auth.currentUser?.id}",
+      );
 
-    showDialog(
-      context: context,
-      builder:
-          (context) => StatefulBuilder(
-            builder:
-                (context, setState) => AlertDialog(
-                  insetPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 24,
-                  ),
-                  scrollable: true,
-                  title: const Text('Cash In via GCash'),
-                  content: Padding(
-                    padding: EdgeInsets.only(
-                      bottom: MediaQuery.of(context).viewInsets.bottom,
-                    ),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 480),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Select amount to cash in:'),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 8,
-                            children:
-                                amounts.map((amt) {
-                                  final isSelected = selectedAmount == amt;
-                                  return ChoiceChip(
-                                    label: Text('₱' + amt.toString()),
-                                    selected: isSelected,
-                                    onSelected:
-                                        (_) => setState(
-                                          () => selectedAmount = amt,
-                                        ),
-                                  );
-                                }).toList(),
-                          ),
-                          const SizedBox(height: 12),
-                          const Text(
-                            'You will be shown a GCash QR code to scan and pay.',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Cancel'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () async {
-                        if (selectedAmount == null) return;
-                        Navigator.pop(context);
-                        _showGCashQRDialog(selectedAmount!);
-                      },
-                      child: const Text('Proceed to Payment'),
-                    ),
+      final response = await SupabaseService.client
+          .from('top_up_qr')
+          .select('*')
+          .eq('is_active', true)
+          .order('amount', ascending: true);
+
+      print("DEBUG: Response received");
+      print("DEBUG: Response type: ${response.runtimeType}");
+      print("DEBUG: Response data: $response");
+
+      final topUpOptions = List<Map<String, dynamic>>.from(response);
+      print("DEBUG: Parsed ${topUpOptions.length} top-up options");
+
+      if (topUpOptions.isNotEmpty) {
+        print("DEBUG: Top-up options found:");
+        for (var option in topUpOptions) {
+          print(
+            "  - Amount: ${option['amount']}, Active: ${option['is_active']}, QR URL: ${option['qr_image_url']}",
+          );
+        }
+      } else {
+        print("DEBUG: No top-up options found in database");
+      }
+
+      if (topUpOptions.isEmpty) {
+        // No options available
+        showDialog(
+          context: context,
+          builder:
+              (context) => AlertDialog(
+                title: const Row(
+                  children: [
+                    Icon(Icons.info_outline, color: evsuRed, size: 28),
+                    SizedBox(width: 8),
+                    Expanded(child: Text('No Options Available')),
                   ],
                 ),
-          ),
-    );
+                content: const Text(
+                  'There are currently no top-up options available. Please try again later or contact admin.',
+                ),
+                actions: [
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
+                    child: const Text(
+                      'OK',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+        );
+        return;
+      }
+
+      // Show selection dialog
+      Map<String, dynamic>? selectedOption = topUpOptions.first;
+
+      showDialog(
+        context: context,
+        builder:
+            (context) => StatefulBuilder(
+              builder:
+                  (context, setState) => AlertDialog(
+                    insetPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 24,
+                    ),
+                    scrollable: true,
+                    title: const Text('Top Up via E-wallet'),
+                    content: Padding(
+                      padding: EdgeInsets.only(
+                        bottom: MediaQuery.of(context).viewInsets.bottom,
+                      ),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 480),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Select amount to top up:'),
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children:
+                                  topUpOptions.map((option) {
+                                    final isSelected =
+                                        selectedOption?['id'] == option['id'];
+                                    final amount =
+                                        (option['amount'] as num).toDouble();
+                                    final description =
+                                        option['description']?.toString() ?? '';
+
+                                    return ChoiceChip(
+                                      label: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text('₱${amount.toStringAsFixed(0)}'),
+                                          if (description.isNotEmpty)
+                                            Text(
+                                              description,
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                      selected: isSelected,
+                                      onSelected:
+                                          (_) => setState(
+                                            () => selectedOption = option,
+                                          ),
+                                      selectedColor: evsuRed.withOpacity(0.2),
+                                      labelStyle: TextStyle(
+                                        color:
+                                            isSelected
+                                                ? evsuRed
+                                                : Colors.black87,
+                                        fontWeight:
+                                            isSelected
+                                                ? FontWeight.w600
+                                                : FontWeight.normal,
+                                      ),
+                                    );
+                                  }).toList(),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text(
+                              'You will be shown a QR code to scan with your e-wallet app (GCash, Maya, etc.).',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Cancel'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () async {
+                          if (selectedOption == null) return;
+                          Navigator.pop(context);
+                          _showGCashQRDialog(selectedOption!);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: evsuRed,
+                        ),
+                        child: const Text(
+                          'Proceed to Payment',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+            ),
+      );
+    } catch (e, stackTrace) {
+      print('DEBUG: ❌ ERROR loading top-up options');
+      print('DEBUG: Error type: ${e.runtimeType}');
+      print('DEBUG: Error message: $e');
+      print('DEBUG: Stack trace: $stackTrace');
+
+      // Check if it's a permission error
+      if (e.toString().contains('permission') ||
+          e.toString().contains('policy')) {
+        print('DEBUG: ⚠️ PERMISSION/POLICY ERROR DETECTED');
+        print(
+          'DEBUG: This likely means the RLS policy is not set up correctly',
+        );
+        print('DEBUG: User needs SELECT permission on top_up_qr table');
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading top-up options: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
   }
 
-  /// Displays GCash QR code and handles proof of payment submission
-  void _showGCashQRDialog(int amount) {
+  /// Displays E-wallet QR code and handles proof of payment submission
+  void _showGCashQRDialog(Map<String, dynamic> topUpOption) {
     File? proofOfPayment;
     bool isSubmitting = false;
 
-    // Map amount to QR code image asset
-    final qrImagePath = 'assets/gcash_$amount.png';
+    // Get details from the option
+    final amount = (topUpOption['amount'] as num).toDouble();
+    final qrImageUrl = topUpOption['qr_image_url']?.toString() ?? '';
+
+    print("DEBUG: _showGCashQRDialog called");
+    print("DEBUG: Amount: $amount");
+    print("DEBUG: QR Image URL: $qrImageUrl");
+    print("DEBUG: Full option data: $topUpOption");
 
     showDialog(
       context: context,
@@ -2088,7 +2219,12 @@ class _HomeTabState extends State<_HomeTab> {
                     children: [
                       Icon(Icons.qr_code_2, color: evsuRed),
                       const SizedBox(width: 8),
-                      Text('Pay ₱$amount via GCash'),
+                      Expanded(
+                        child: Text(
+                          'Pay ₱${amount.toStringAsFixed(0)} via E-wallet',
+                          style: const TextStyle(fontSize: 18),
+                        ),
+                      ),
                     ],
                   ),
                   content: ConstrainedBox(
@@ -2098,15 +2234,21 @@ class _HomeTabState extends State<_HomeTab> {
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         const Text(
-                          'Scan this QR code using your GCash app:',
+                          'Scan this QR code using your e-wallet app:',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
                           ),
                           textAlign: TextAlign.center,
                         ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          '(GCash, Maya, etc.)',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                          textAlign: TextAlign.center,
+                        ),
                         const SizedBox(height: 16),
-                        // Display GCash QR Code
+                        // Display E-wallet QR Code from database
                         Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
@@ -2120,34 +2262,98 @@ class _HomeTabState extends State<_HomeTab> {
                               ),
                             ],
                           ),
-                          child: Image.asset(
-                            qrImagePath,
-                            width: 250,
-                            height: 250,
-                            fit: BoxFit.contain,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                width: 250,
-                                height: 250,
-                                alignment: Alignment.center,
-                                child: const Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.error_outline,
-                                      size: 48,
-                                      color: Colors.red,
+                          child:
+                              qrImageUrl.isNotEmpty
+                                  ? Image.network(
+                                    qrImageUrl,
+                                    width: 250,
+                                    height: 250,
+                                    fit: BoxFit.contain,
+                                    loadingBuilder: (
+                                      context,
+                                      child,
+                                      loadingProgress,
+                                    ) {
+                                      if (loadingProgress == null) return child;
+                                      return Container(
+                                        width: 250,
+                                        height: 250,
+                                        alignment: Alignment.center,
+                                        child: CircularProgressIndicator(
+                                          value:
+                                              loadingProgress
+                                                          .expectedTotalBytes !=
+                                                      null
+                                                  ? loadingProgress
+                                                          .cumulativeBytesLoaded /
+                                                      loadingProgress
+                                                          .expectedTotalBytes!
+                                                  : null,
+                                          color: evsuRed,
+                                        ),
+                                      );
+                                    },
+                                    errorBuilder: (context, error, stackTrace) {
+                                      print("DEBUG: ❌ Failed to load QR image");
+                                      print("DEBUG: Error: $error");
+                                      print("DEBUG: Stack trace: $stackTrace");
+                                      return Container(
+                                        width: 250,
+                                        height: 250,
+                                        alignment: Alignment.center,
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            const Icon(
+                                              Icons.error_outline,
+                                              size: 48,
+                                              color: Colors.red,
+                                            ),
+                                            const SizedBox(height: 8),
+                                            const Text(
+                                              'Failed to load QR code',
+                                              style: TextStyle(
+                                                color: Colors.red,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              error.toString(),
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.grey,
+                                              ),
+                                              textAlign: TextAlign.center,
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  )
+                                  : Container(
+                                    width: 250,
+                                    height: 250,
+                                    alignment: Alignment.center,
+                                    child: const Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.error_outline,
+                                          size: 48,
+                                          color: Colors.orange,
+                                        ),
+                                        SizedBox(height: 8),
+                                        Text(
+                                          'QR code not available',
+                                          style: TextStyle(
+                                            color: Colors.orange,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    SizedBox(height: 8),
-                                    Text(
-                                      'QR code not found',
-                                      style: TextStyle(color: Colors.red),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
+                                  ),
                         ),
                         const SizedBox(height: 20),
                         const Divider(),
@@ -2340,12 +2546,12 @@ class _HomeTabState extends State<_HomeTab> {
 
   /// Submits top-up request to Supabase
   Future<void> _submitTopUpRequest({
-    required int amount,
+    required double amount,
     required File proofFile,
   }) async {
     final studentId = SessionService.currentUserStudentId;
 
-    print('DEBUG: Submitting top-up request for ₱$amount');
+    print('DEBUG: Submitting top-up request for ₱${amount.toStringAsFixed(2)}');
 
     // Upload screenshot
     final screenshotUrl = await _uploadProofToSupabase(proofFile, studentId);
@@ -2360,16 +2566,20 @@ class _HomeTabState extends State<_HomeTab> {
 
     // Insert into top_up_requests table
     try {
+      // Some schemas use integer for amount; ensure we send an int if required
+      final dynamic normalizedAmount =
+          amount % 1 == 0 ? amount.toInt() : amount;
+
       await SupabaseService.client.from('top_up_requests').insert({
         'user_id': studentId,
-        'amount': amount,
+        'amount': normalizedAmount,
         'screenshot_url': screenshotUrl,
         'status': 'Pending Verification',
         'created_at': DateTime.now().toIso8601String(),
       });
 
       print(
-        'DEBUG: Top-up request submitted successfully for ₱$amount by user $studentId',
+        'DEBUG: Top-up request submitted successfully for ₱${amount.toStringAsFixed(2)} by user $studentId',
       );
     } catch (e) {
       print('ERROR: Failed to insert into top_up_requests table: $e');
@@ -3079,7 +3289,6 @@ class _InboxTabState extends State<_InboxTab> {
   @override
   void initState() {
     super.initState();
-    print('DEBUG INBOX: initState called');
     _loadNotifications();
     _subscribeToNotifications();
   }
@@ -3099,13 +3308,7 @@ class _InboxTabState extends State<_InboxTab> {
       await SupabaseService.initialize();
       final studentId = SessionService.currentUserData?['student_id'] ?? '';
 
-      print('DEBUG: Loading notifications for student: $studentId');
-
-      // DEBUG: Test loan_payments table for inbox
-      await _debugLoanPaymentsTableInbox(studentId);
-
       if (studentId.isEmpty) {
-        print('ERROR: Student ID is empty, cannot load notifications');
         setState(() {
           _isLoading = false;
         });
@@ -3113,7 +3316,6 @@ class _InboxTabState extends State<_InboxTab> {
       }
 
       // Get actual notifications from the notifications table
-      print('DEBUG: Fetching notifications from database...');
       final notifications = await NotificationService.getUserNotifications(
         studentId,
       );
@@ -3150,10 +3352,7 @@ class _InboxTabState extends State<_InboxTab> {
             .eq('transaction_type', 'loan_disbursement')
             .order('created_at', ascending: false)
             .limit(50);
-        print('DEBUG: Loan disbursements found: ${loanDisbursements.length}');
-      } catch (e) {
-        print('DEBUG: Error fetching loan disbursements: $e');
-      }
+      } catch (e) {}
 
       // Get active loans from loan_actives
       List<Map<String, dynamic>> activeLoans = [];
@@ -3166,15 +3365,11 @@ class _InboxTabState extends State<_InboxTab> {
             .eq('student_id', studentId)
             .order('created_at', ascending: false)
             .limit(50);
-        print('DEBUG: Active loans found: ${activeLoans.length}');
-      } catch (e) {
-        print('DEBUG: Error fetching active loans: $e');
-      }
+      } catch (e) {}
 
       // Get loan payments from loan_payments
       List<Map<String, dynamic>> loanPayments = [];
       try {
-        print('DEBUG INBOX: Querying loan payments for student: "$studentId"');
         loanPayments = await SupabaseService.client
             .from('loan_payments')
             .select(
@@ -3183,18 +3378,8 @@ class _InboxTabState extends State<_InboxTab> {
             .eq('student_id', studentId)
             .order('created_at', ascending: false)
             .limit(50);
-        print(
-          'DEBUG INBOX: Raw loan payments query result: ${loanPayments.length}',
-        );
-
-        if (loanPayments.isNotEmpty) {
-          print(
-            'DEBUG INBOX: First loan payment sample: ${loanPayments.first}',
-          );
-        }
       } catch (e) {
-        print('DEBUG INBOX: Error fetching loan payments: $e');
-        print('DEBUG INBOX: Error type: ${e.runtimeType}');
+        // Error fetching loan payments
       }
 
       // Get service transactions
@@ -3206,14 +3391,9 @@ class _InboxTabState extends State<_InboxTab> {
             .eq('student_id', studentId)
             .order('created_at', ascending: false)
             .limit(50);
-        print(
-          'DEBUG: Service transactions found: ${serviceTransactions.length}',
-        );
-      } catch (e) {
-        print('DEBUG: Error fetching service transactions: $e');
-      }
+      } catch (e) {}
 
-      // Get top-up transactions
+      // Get top-up transactions (include gcash top-ups)
       List<Map<String, dynamic>> topUpTransactions = [];
       try {
         topUpTransactions = await SupabaseService.client
@@ -3222,18 +3402,14 @@ class _InboxTabState extends State<_InboxTab> {
               'id, student_id, amount, new_balance, created_at, processed_by',
             )
             .eq('student_id', studentId)
-            .eq('transaction_type', 'top_up')
+            .inFilter('transaction_type', ['top_up', 'top_up_gcash'])
             .order('created_at', ascending: false)
             .limit(50);
-        print('DEBUG: Top-up transactions found: ${topUpTransactions.length}');
-      } catch (e) {
-        print('DEBUG: Error fetching top-up transactions: $e');
-      }
+      } catch (e) {}
 
       // Get withdrawal transactions using adminClient
       List<Map<String, dynamic>> withdrawalTransactions = [];
       try {
-        print('DEBUG INBOX: Fetching withdrawal transactions...');
         final withdrawalResult = await SupabaseService.getUserWithdrawalHistory(
           studentId: studentId,
           limit: 50,
@@ -3243,16 +3419,34 @@ class _InboxTabState extends State<_InboxTab> {
           withdrawalTransactions = List<Map<String, dynamic>>.from(
             withdrawalResult['data'] ?? [],
           );
-          print(
-            'DEBUG INBOX: Withdrawal transactions found: ${withdrawalTransactions.length}',
-          );
-        } else {
-          print(
-            'DEBUG INBOX: Error fetching withdrawals: ${withdrawalResult['message']}',
-          );
         }
       } catch (e) {
-        print('DEBUG INBOX: Error fetching withdrawal transactions: $e');
+        // Error fetching withdrawal transactions
+      }
+
+      // Get withdrawal requests (Approved/Rejected only)
+      List<Map<String, dynamic>> withdrawalRequests = [];
+      try {
+        final withdrawalRequestsResult =
+            await SupabaseService.getUserWithdrawalRequests(
+              studentId: studentId,
+              limit: 50,
+            );
+
+        if (withdrawalRequestsResult['success'] == true) {
+          final allRequests = List<Map<String, dynamic>>.from(
+            withdrawalRequestsResult['data'] ?? [],
+          );
+          // Filter only Approved and Rejected requests
+          withdrawalRequests =
+              allRequests.where((request) {
+                final status = request['status']?.toString() ?? '';
+                return status == 'Approved' || status == 'Rejected';
+              }).toList();
+        }
+      } catch (e) {
+        // Error fetching withdrawal requests
+        print('Error fetching withdrawal requests: $e');
       }
 
       // Convert loan data to notification-like format
@@ -3296,14 +3490,7 @@ class _InboxTabState extends State<_InboxTab> {
       }
 
       // Add loan payments as notifications
-      print(
-        'DEBUG INBOX: Processing ${loanPayments.length} loan payments for notifications...',
-      );
       for (final payment in loanPayments) {
-        print(
-          'DEBUG INBOX: Processing loan payment: ${payment['id']}, amount: ${payment['payment_amount']}',
-        );
-
         final notificationData = {
           'id': 'loan_payment_${payment['id']}',
           'title': 'Loan Payment',
@@ -3319,14 +3506,8 @@ class _InboxTabState extends State<_InboxTab> {
           'loan_id': payment['loan_id'],
         };
 
-        print(
-          'DEBUG INBOX: Adding loan payment notification: $notificationData',
-        );
         allNotifications.add(notificationData);
       }
-      print(
-        'DEBUG INBOX: Total loan payment notifications added: ${allNotifications.where((n) => n['type'] == 'loan_payment').length}',
-      );
 
       // Add service transactions as notifications
       for (final service in serviceTransactions) {
@@ -3363,9 +3544,6 @@ class _InboxTabState extends State<_InboxTab> {
       }
 
       // Add withdrawal transactions as notifications
-      print(
-        'DEBUG INBOX: Processing ${withdrawalTransactions.length} withdrawals for notifications...',
-      );
       for (final withdrawal in withdrawalTransactions) {
         final amount = withdrawal['amount'];
         final transactionType =
@@ -3381,12 +3559,8 @@ class _InboxTabState extends State<_InboxTab> {
               'Service Account';
           destination = serviceName;
           message = 'You withdrew ₱$amount to $serviceName.';
-          print(
-            'DEBUG INBOX: Service withdrawal - Amount: ₱$amount, Destination: $serviceName',
-          );
         } else {
           message = 'You withdrew ₱$amount to Admin.';
-          print('DEBUG INBOX: Admin withdrawal - Amount: ₱$amount');
         }
 
         final notificationData = {
@@ -3404,14 +3578,66 @@ class _InboxTabState extends State<_InboxTab> {
           'metadata': metadata,
         };
 
-        print(
-          'DEBUG INBOX: Adding withdrawal notification: ID=${withdrawal['id']}, Destination=$destination',
-        );
         allNotifications.add(notificationData);
       }
-      print(
-        'DEBUG INBOX: Total withdrawal notifications added: ${allNotifications.where((n) => n['type'] == 'withdrawal').length}',
-      );
+
+      // Add withdrawal requests (Approved/Rejected) as notifications
+      for (final request in withdrawalRequests) {
+        final amount = request['amount'];
+        final status = request['status']?.toString() ?? '';
+        final transferType = request['transfer_type']?.toString() ?? '';
+        final adminNotes = request['admin_notes']?.toString() ?? '';
+        final processedAt = request['processed_at']?.toString();
+        final processedBy = request['processed_by']?.toString() ?? 'Admin';
+        final createdAt =
+            request['created_at']?.toString() ??
+            DateTime.now().toIso8601String();
+
+        String title;
+        String message;
+        bool isUrgent = false;
+
+        if (status == 'Approved') {
+          title = 'Withdrawal Approved';
+          if (transferType == 'Gcash') {
+            final gcashNumber = request['gcash_number']?.toString() ?? '';
+            message =
+                'Your withdrawal request of ₱$amount via GCash has been approved. Funds will be sent to $gcashNumber.';
+          } else {
+            message =
+                'Your withdrawal request of ₱$amount (Cash) has been approved. Ready for pickup.';
+          }
+        } else {
+          // Rejected
+          title = 'Withdrawal Rejected';
+          message = 'Your withdrawal request of ₱$amount has been rejected.';
+          if (adminNotes.isNotEmpty) {
+            message += ' Reason: $adminNotes';
+          }
+          isUrgent = true;
+        }
+
+        final notificationData = {
+          'id': 'withdrawal_request_${request['id']}',
+          'title': title,
+          'message': message,
+          'type': 'withdrawal_request',
+          'status': status,
+          'created_at': processedAt ?? createdAt,
+          'is_read': true, // Mark as read by default
+          'is_urgent': isUrgent,
+          'request_id': request['id'],
+          'amount': amount,
+          'transfer_type': transferType,
+          'admin_notes': adminNotes,
+          'processed_by': processedBy,
+          'processed_at': processedAt,
+          'gcash_number': request['gcash_number']?.toString(),
+          'gcash_account_name': request['gcash_account_name']?.toString(),
+        };
+
+        allNotifications.add(notificationData);
+      }
 
       // Sort all notifications by date (newest first)
       allNotifications.sort(
@@ -3420,20 +3646,11 @@ class _InboxTabState extends State<_InboxTab> {
         ).compareTo(DateTime.parse(a['created_at'])),
       );
 
-      print(
-        'DEBUG: Total notifications including loan data: ${allNotifications.length}',
-      );
-
       setState(() {
         _notifications = allNotifications;
         _isLoading = false;
       });
-
-      print(
-        'DEBUG: Inbox state updated with ${_notifications.length} notifications',
-      );
     } catch (e) {
-      print('ERROR: Failed to load notifications: $e');
       setState(() {
         _isLoading = false;
       });
@@ -3443,45 +3660,27 @@ class _InboxTabState extends State<_InboxTab> {
   void _subscribeToNotifications() {
     try {
       final studentId = SessionService.currentUserData?['student_id'] ?? '';
-      print('DEBUG INBOX: Setting up subscription for student: $studentId');
 
       if (studentId.isNotEmpty) {
-        print('DEBUG INBOX: Creating notification stream subscription...');
         _notificationSub = NotificationService.subscribeToNotifications(
           studentId,
         ).listen(
           (notifications) {
-            print(
-              'DEBUG INBOX: Stream received ${notifications.length} notifications',
-            );
             setState(() {
               _notifications = notifications;
             });
-            print(
-              'DEBUG INBOX: State updated with ${_notifications.length} notifications',
-            );
           },
-          onError: (error) {
-            print('ERROR INBOX: Error in notification stream: $error');
+          onError: (_) {
+            // Error in notification stream
           },
-        );
-        print('DEBUG INBOX: Subscription created successfully');
-      } else {
-        print(
-          'ERROR INBOX: Student ID is empty, cannot subscribe to notifications',
         );
       }
-    } catch (e) {
-      print('ERROR INBOX: Error subscribing to notifications: $e');
+    } catch (_) {
+      // Error subscribing to notifications
     }
   }
 
   List<Map<String, dynamic>> _getFilteredNotifications() {
-    print('DEBUG INBOX: Filtering notifications with filter: $_selectedFilter');
-    print(
-      'DEBUG INBOX: Total notifications before filtering: ${_notifications.length}',
-    );
-
     List<Map<String, dynamic>> filtered;
 
     if (_selectedFilter == 'All') {
@@ -3507,15 +3706,11 @@ class _InboxTabState extends State<_InboxTab> {
                 type == 'active_loan' ||
                 type == 'loan_disbursement' ||
                 type == 'top_up' ||
-                type == 'withdrawal';
+                type == 'withdrawal' ||
+                type == 'withdrawal_request';
           }).toList();
     } else {
       filtered = _notifications;
-    }
-
-    print('DEBUG INBOX: Filtered notifications count: ${filtered.length}');
-    if (filtered.isNotEmpty) {
-      print('DEBUG INBOX: Sample filtered notification: ${filtered.first}');
     }
 
     return filtered;
@@ -3553,6 +3748,10 @@ class _InboxTabState extends State<_InboxTab> {
         return Colors.blue;
       case 'withdrawal':
         return Colors.red[700]!;
+      case 'withdrawal_request':
+        // Color based on status
+        final status = notification['status']?.toString() ?? '';
+        return status == 'Approved' ? Colors.green : Colors.red;
       case 'loan_disbursement':
         return Colors.purple;
       case 'active_loan':
@@ -3589,6 +3788,10 @@ class _InboxTabState extends State<_InboxTab> {
         return Icons.call_received;
       case 'withdrawal':
         return Icons.account_balance_wallet;
+      case 'withdrawal_request':
+        // Icon based on status
+        final status = notification['status']?.toString() ?? '';
+        return status == 'Approved' ? Icons.check_circle : Icons.cancel;
       case 'loan_disbursement':
         return Icons.account_balance;
       case 'active_loan':
@@ -3622,15 +3825,7 @@ class _InboxTabState extends State<_InboxTab> {
 
   @override
   Widget build(BuildContext context) {
-    print('DEBUG INBOX: build() called');
-    print('DEBUG INBOX: _isLoading: $_isLoading');
-    print('DEBUG INBOX: _notifications.length: ${_notifications.length}');
-    print('DEBUG INBOX: _selectedFilter: $_selectedFilter');
-
     final filteredNotifications = _getFilteredNotifications();
-    print(
-      'DEBUG INBOX: filteredNotifications.length: ${filteredNotifications.length}',
-    );
 
     return SafeArea(
       child: Padding(
@@ -3685,9 +3880,6 @@ class _InboxTabState extends State<_InboxTab> {
                         itemCount: filteredNotifications.length,
                         itemBuilder: (context, index) {
                           final notification = filteredNotifications[index];
-                          print(
-                            'DEBUG INBOX: Building notification card for index $index: ${notification['title']}',
-                          );
                           return _buildNotificationCard(notification);
                         },
                       ),
@@ -3718,20 +3910,11 @@ class _InboxTabState extends State<_InboxTab> {
   }
 
   Widget _buildNotificationCard(Map<String, dynamic> notification) {
-    print(
-      'DEBUG INBOX: Building notification card for: ${notification['title']}',
-    );
-    print('DEBUG INBOX: Notification data: $notification');
-
     final isUrgent = notification['is_urgent'] == true;
     final createdAt = DateTime.parse(notification['created_at']);
     final timeAgo = _getTimeAgo(createdAt);
     final notificationColor = _getNotificationColor(notification);
     final notificationIcon = _getNotificationIcon(notification);
-
-    print(
-      'DEBUG INBOX: Card properties - isUrgent: $isUrgent, timeAgo: $timeAgo',
-    );
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -3739,7 +3922,6 @@ class _InboxTabState extends State<_InboxTab> {
       color: isUrgent ? Colors.red.withOpacity(0.05) : null,
       child: InkWell(
         onTap: () {
-          print('DEBUG INBOX: Notification tapped: ${notification['title']}');
           _showTransactionDetailModal(notification);
         },
         borderRadius: BorderRadius.circular(8),
@@ -3836,11 +4018,6 @@ class _InboxTabState extends State<_InboxTab> {
   }
 
   Widget _buildEmptyState() {
-    print('DEBUG INBOX: Building empty state');
-    print(
-      'DEBUG INBOX: Current state - _isLoading: $_isLoading, _notifications.length: ${_notifications.length}',
-    );
-
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -3848,7 +4025,7 @@ class _InboxTabState extends State<_InboxTab> {
           Icon(Icons.inbox_outlined, size: 64, color: Colors.grey[400]),
           const SizedBox(height: 16),
           Text(
-            'No notifications',
+            'No Inbox',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w500,
@@ -3860,41 +4037,12 @@ class _InboxTabState extends State<_InboxTab> {
             'You\'re all caught up!',
             style: TextStyle(fontSize: 14, color: Colors.grey[500]),
           ),
-          const SizedBox(height: 16),
-          // Debug information
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Column(
-              children: [
-                Text(
-                  'DEBUG INFO:',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-                Text('Loading: $_isLoading', style: TextStyle(fontSize: 10)),
-                Text(
-                  'Notifications: ${_notifications.length}',
-                  style: TextStyle(fontSize: 10),
-                ),
-                Text(
-                  'Filter: $_selectedFilter',
-                  style: TextStyle(fontSize: 10),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
   }
 
   void _showTransactionDetailModal(Map<String, dynamic> notification) async {
-    print('DEBUG MODAL: Starting _showTransactionDetailModal');
-    print('DEBUG MODAL: Notification data: $notification');
-
     // Show loading dialog first
     showDialog(
       context: context,
@@ -3906,15 +4054,12 @@ class _InboxTabState extends State<_InboxTab> {
 
     try {
       // Fetch actual transaction data based on notification type
-      print('DEBUG MODAL: Fetching transaction data...');
       final transactionData = await _fetchTransactionData(notification);
-      print('DEBUG MODAL: Transaction data fetched: $transactionData');
 
       // Close loading dialog
       Navigator.of(context).pop();
 
       // Show transaction details modal - Clean design matching home_tab
-      print('DEBUG MODAL: Showing transaction details modal...');
       final screenSize = MediaQuery.of(context).size;
       final isSmallScreen = screenSize.width < 600;
 
@@ -4001,12 +4146,16 @@ class _InboxTabState extends State<_InboxTab> {
                               ),
                             ),
 
-                            // Status
+                            // Status - use helper methods that handle withdrawal_request status
                             _buildReceiptRow(
                               'Status',
-                              _getTransactionStatus(transactionData?['type']),
-                              statusColor: _getTransactionStatusColor(
-                                transactionData?['type'],
+                              _getTransactionStatusForModal(
+                                transactionData,
+                                notification,
+                              ),
+                              statusColor: _getTransactionStatusColorForModal(
+                                transactionData,
+                                notification,
                               ),
                             ),
 
@@ -4177,6 +4326,8 @@ class _InboxTabState extends State<_InboxTab> {
         return 'Transfer Receipt';
       case 'withdrawal':
         return 'Withdrawal Receipt';
+      case 'withdrawal_request':
+        return 'Withdrawal Request Details';
       default:
         return 'Transaction Receipt';
     }
@@ -4195,9 +4346,30 @@ class _InboxTabState extends State<_InboxTab> {
         return 'Completed';
       case 'active_loan':
         return 'Active';
+      case 'withdrawal_request':
+        return 'Pending'; // Default, will be overridden by actual data
       default:
         return 'Processed';
     }
+  }
+
+  String _getTransactionStatusForModal(
+    Map<String, dynamic>? transactionData,
+    Map<String, dynamic> notification,
+  ) {
+    final transactionType = transactionData?['type']?.toString().toLowerCase();
+
+    // For withdrawal_request, get status from data
+    if (transactionType == 'withdrawal_request') {
+      final data = transactionData?['data'] as Map<String, dynamic>?;
+      final status =
+          data?['status']?.toString() ??
+          notification['status']?.toString() ??
+          'Pending';
+      return status;
+    }
+
+    return _getTransactionStatus(transactionType);
   }
 
   Color _getTransactionStatusColor(String? transactionType) {
@@ -4213,9 +4385,30 @@ class _InboxTabState extends State<_InboxTab> {
         return Colors.green[700]!;
       case 'active_loan':
         return Colors.blue[700]!;
+      case 'withdrawal_request':
+        return Colors.orange; // Default, will be overridden by actual data
       default:
         return Colors.blue[700]!;
     }
+  }
+
+  Color _getTransactionStatusColorForModal(
+    Map<String, dynamic>? transactionData,
+    Map<String, dynamic> notification,
+  ) {
+    final transactionType = transactionData?['type']?.toString().toLowerCase();
+
+    // For withdrawal_request, get color based on status
+    if (transactionType == 'withdrawal_request') {
+      final data = transactionData?['data'] as Map<String, dynamic>?;
+      final status =
+          data?['status']?.toString() ??
+          notification['status']?.toString() ??
+          'Pending';
+      return status == 'Approved' ? Colors.green : Colors.red;
+    }
+
+    return _getTransactionStatusColor(transactionType);
   }
 
   double? _getTransactionAmountFromData(Map<String, dynamic>? transactionData) {
@@ -4237,6 +4430,8 @@ class _InboxTabState extends State<_InboxTab> {
       case 'transfer':
         return _safeParseNumber(data['amount']);
       case 'withdrawal':
+        return _safeParseNumber(data['amount']);
+      case 'withdrawal_request':
         return _safeParseNumber(data['amount']);
       case 'active_loan':
         return _safeParseNumber(data['loan_amount']);
@@ -4462,6 +4657,111 @@ class _InboxTabState extends State<_InboxTab> {
           details.add(_buildReceiptRow('Destination', 'Admin'));
         }
         break;
+
+      case 'withdrawal_request':
+        // Display withdrawal request details
+        final status = data['status']?.toString() ?? '';
+        final transferType = data['transfer_type']?.toString() ?? '';
+        final adminNotes = data['admin_notes']?.toString() ?? '';
+        final processedBy = data['processed_by']?.toString() ?? 'Admin';
+        final processedAt = data['processed_at']?.toString();
+
+        details.add(
+          _buildReceiptRow(
+            'Request Status',
+            status,
+            statusColor: status == 'Approved' ? Colors.green : Colors.red,
+          ),
+        );
+
+        details.add(
+          _buildReceiptRow(
+            'Withdrawal Amount',
+            '₱${_safeParseNumber(data['amount']).toStringAsFixed(2)}',
+          ),
+        );
+
+        details.add(_buildReceiptRow('Transfer Type', transferType));
+
+        if (transferType == 'Gcash') {
+          final gcashNumber = data['gcash_number']?.toString() ?? '';
+          final gcashAccountName = data['gcash_account_name']?.toString() ?? '';
+          if (gcashNumber.isNotEmpty) {
+            details.add(_buildReceiptRow('GCash Number', gcashNumber));
+          }
+          if (gcashAccountName.isNotEmpty) {
+            details.add(
+              _buildReceiptRow('GCash Account Name', gcashAccountName),
+            );
+          }
+        }
+
+        if (processedBy.isNotEmpty && processedBy != 'Admin') {
+          details.add(_buildReceiptRow('Processed By', processedBy));
+        }
+
+        if (processedAt != null && processedAt.isNotEmpty) {
+          details.add(
+            _buildReceiptRow('Processed At', _formatDateTime(processedAt)),
+          );
+        }
+
+        // Show admin notes, especially for rejected requests
+        if (adminNotes.isNotEmpty) {
+          details.add(const SizedBox(height: 12));
+          details.add(
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color:
+                    status == 'Rejected'
+                        ? Colors.red.withOpacity(0.1)
+                        : Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color:
+                      status == 'Rejected'
+                          ? Colors.red.withOpacity(0.3)
+                          : Colors.blue.withOpacity(0.3),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        status == 'Rejected'
+                            ? Icons.cancel
+                            : Icons.info_outline,
+                        size: 16,
+                        color: status == 'Rejected' ? Colors.red : Colors.blue,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        status == 'Rejected'
+                            ? 'Rejection Reason'
+                            : 'Admin Notes',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color:
+                              status == 'Rejected' ? Colors.red : Colors.blue,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    adminNotes,
+                    style: const TextStyle(fontSize: 12, color: Colors.black87),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        break;
     }
 
     if (details.isNotEmpty) {
@@ -4623,6 +4923,66 @@ class _InboxTabState extends State<_InboxTab> {
             };
           }
           break;
+
+        case 'withdrawal_request':
+          // For withdrawal requests, use request_id to fetch from withdrawal_requests table
+          final requestId = notification['request_id']?.toString();
+          if (requestId != null) {
+            try {
+              final result =
+                  await SupabaseService.adminClient
+                      .from('withdrawal_requests')
+                      .select('*')
+                      .eq('id', requestId)
+                      .eq('student_id', studentId)
+                      .single();
+              return {
+                'type': 'withdrawal_request',
+                'data': result,
+                'id': requestId,
+              };
+            } catch (e) {
+              // If fetch fails, return notification data
+              return {
+                'type': 'withdrawal_request',
+                'data': notification,
+                'id': requestId,
+              };
+            }
+          }
+          // If no request_id, return notification data
+          return {
+            'type': 'withdrawal_request',
+            'data': notification,
+            'id': notificationId?.toString(),
+          };
+
+        case 'withdrawal':
+          // For withdrawal transactions, fetch from withdrawal_transactions
+          if (transactionId != null) {
+            try {
+              final result =
+                  await SupabaseService.adminClient
+                      .from('withdrawal_transactions')
+                      .select('*')
+                      .eq('id', transactionId)
+                      .eq('student_id', studentId)
+                      .single();
+              return {
+                'type': 'withdrawal',
+                'data': result,
+                'id': transactionId,
+              };
+            } catch (e) {
+              // If fetch fails, return notification data
+              return {
+                'type': 'withdrawal',
+                'data': notification,
+                'id': transactionId,
+              };
+            }
+          }
+          break;
       }
 
       // If no specific transaction found, return notification data
@@ -4631,7 +4991,9 @@ class _InboxTabState extends State<_InboxTab> {
           notificationType == 'active_loan' ||
           notificationType == 'loan_payment' ||
           notificationType == 'service_payment' ||
-          notificationType == 'top_up') {
+          notificationType == 'top_up' ||
+          notificationType == 'withdrawal_request' ||
+          notificationType == 'withdrawal') {
         return {
           'type': notificationType,
           'data': notification,
@@ -4645,84 +5007,12 @@ class _InboxTabState extends State<_InboxTab> {
         'id': notificationId?.toString(),
       };
     } catch (e) {
-      print('DEBUG: Error fetching transaction data: $e');
       return {
         'type': notification['type']?.toString() ?? 'unknown',
         'data': notification,
         'id': notification['id']?.toString(),
       };
     }
-  }
-
-  // DEBUG: Comprehensive loan_payments table debugging for inbox
-  Future<void> _debugLoanPaymentsTableInbox(String studentId) async {
-    print('\n=== DEBUG LOAN PAYMENTS TABLE INBOX START ===');
-    print('DEBUG INBOX: Student ID: "$studentId"');
-
-    try {
-      // Test 1: Check if table exists and is accessible
-      print('DEBUG INBOX: Testing loan_payments table accessibility...');
-      await SupabaseService.client
-          .from('loan_payments')
-          .select('count')
-          .limit(1);
-      print('DEBUG INBOX: Table accessibility test passed');
-
-      // Test 2: Get all loan payments for this student
-      print(
-        'DEBUG INBOX: Getting all loan payments for student "$studentId"...',
-      );
-      final allPayments = await SupabaseService.client
-          .from('loan_payments')
-          .select('*')
-          .eq('student_id', studentId)
-          .order('created_at', ascending: false)
-          .limit(50);
-      print('DEBUG INBOX: Loan payments found: ${allPayments.length}');
-
-      if (allPayments.isNotEmpty) {
-        print('DEBUG INBOX: Sample loan payment data:');
-        for (int i = 0; i < allPayments.length && i < 3; i++) {
-          final payment = allPayments[i];
-          print('DEBUG INBOX: Payment ${i + 1}:');
-          print('  - ID: ${payment['id']}');
-          print('  - Student ID: ${payment['student_id']}');
-          print(
-            '  - Payment Amount: ${payment['payment_amount']} (type: ${payment['payment_amount'].runtimeType})',
-          );
-          print(
-            '  - Remaining Balance: ${payment['remaining_balance']} (type: ${payment['remaining_balance'].runtimeType})',
-          );
-          print('  - Created At: ${payment['created_at']}');
-          print('  - Loan ID: ${payment['loan_id']}');
-        }
-      } else {
-        print('DEBUG INBOX: No loan payments found for student "$studentId"');
-
-        // Check if there are any loan payments at all
-        print(
-          'DEBUG INBOX: Checking if there are any loan payments in the entire table...',
-        );
-        final anyPayments = await SupabaseService.client
-            .from('loan_payments')
-            .select('id, student_id, payment_amount, created_at')
-            .limit(5);
-        print('DEBUG INBOX: Any loan payments in table: ${anyPayments.length}');
-        if (anyPayments.isNotEmpty) {
-          print('DEBUG INBOX: Sample loan payments from entire table:');
-          for (final payment in anyPayments) {
-            print(
-              '  - ID: ${payment['id']}, Student: ${payment['student_id']}, Amount: ${payment['payment_amount']}',
-            );
-          }
-        }
-      }
-    } catch (e) {
-      print('DEBUG INBOX: Error during loan_payments debugging: $e');
-      print('DEBUG INBOX: Error type: ${e.runtimeType}');
-    }
-
-    print('=== DEBUG LOAN PAYMENTS TABLE INBOX END ===\n');
   }
 }
 
@@ -4786,7 +5076,7 @@ class _TransactionsTabState extends State<_TransactionsTab> {
 
       final List<Map<String, dynamic>> merged = [];
 
-      // 1. Query top-up transactions (only actual top-ups, not loan disbursements)
+      // 1. Query top-up transactions (include manual and gcash; exclude loan disbursements)
       try {
         print('DEBUG: Querying top_up_transactions for actual top-ups...');
         final topups = await SupabaseService.client
@@ -4795,7 +5085,10 @@ class _TransactionsTabState extends State<_TransactionsTab> {
               'id, student_id, amount, new_balance, created_at, processed_by, transaction_type',
             )
             .eq('student_id', studentId)
-            .eq('transaction_type', 'top_up') // Only get actual top-ups
+            .inFilter('transaction_type', [
+              'top_up',
+              'top_up_gcash',
+            ]) // include both manual and gcash
             .order('created_at', ascending: false)
             .limit(100);
 
@@ -4803,7 +5096,8 @@ class _TransactionsTabState extends State<_TransactionsTab> {
         for (final t in (topups as List)) {
           merged.add({
             'id': t['id'],
-            'transaction_type': 'top_up',
+            'transaction_type':
+                'top_up', // normalize gcash/manual into one UI type
             'amount': _safeParseNumber(t['amount']),
             'created_at':
                 t['created_at']?.toString() ?? DateTime.now().toIso8601String(),

@@ -1,5 +1,9 @@
+// E-wallet Payment Configuration Screen
+// Purpose: Admin can manage top-up amounts and QR codes for e-wallet payments
+// Data is stored in top_up_qr table and images in E-wallet_QR storage bucket
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 import '../services/supabase_service.dart';
 
 class ApiConfigurationScreen extends StatefulWidget {
@@ -9,83 +13,290 @@ class ApiConfigurationScreen extends StatefulWidget {
   State<ApiConfigurationScreen> createState() => _ApiConfigurationScreenState();
 }
 
-class _ApiConfigurationScreenState extends State<ApiConfigurationScreen>
-    with SingleTickerProviderStateMixin {
+class _ApiConfigurationScreenState extends State<ApiConfigurationScreen> {
   static const Color evsuRed = Color(0xFFB91C1C);
 
-  // Paytaca controllers
-  final TextEditingController _xpubKeyController = TextEditingController();
-  final TextEditingController _walletHashController = TextEditingController();
-  final TextEditingController _webhookUrlController = TextEditingController();
-
-  // PayMongo controllers
-  final TextEditingController _pmPublicKeyController = TextEditingController();
-  final TextEditingController _pmSecretKeyController = TextEditingController();
-  final TextEditingController _pmWebhookSecretController =
-      TextEditingController();
+  // Controllers
+  final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
 
   // State variables
-  bool _paytacaEnabled = false;
-  bool _showXpubKey = false;
-  bool _showWalletHash = false;
   bool _isLoading = false;
-  String _connectionStatus = 'Not Connected';
+  List<Map<String, dynamic>> _topUpOptions = [];
+  File? _selectedImage;
+  final ImagePicker _picker = ImagePicker();
 
-  // PayMongo state
-  bool _paymongoEnabled = false;
-  bool _showPmPublic = false;
-  bool _showPmSecret = false;
-  bool _showPmWebhook = false;
-  String _paymongoProvider = 'gcash'; // gcash | maya | grabpay (extendable)
-
-  // UI: Tabs
-  late TabController _tabController;
+  // Edit mode
+  bool _isEditMode = false;
+  int? _editingId;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _loadSavedConfiguration();
+    _loadTopUpOptions();
   }
 
   @override
   void dispose() {
-    _xpubKeyController.dispose();
-    _walletHashController.dispose();
-    _webhookUrlController.dispose();
-    _pmPublicKeyController.dispose();
-    _pmSecretKeyController.dispose();
-    _pmWebhookSecretController.dispose();
-    _tabController.dispose();
+    _amountController.dispose();
+    _descriptionController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadSavedConfiguration() async {
+  /// Load all top-up QR options from database
+  Future<void> _loadTopUpOptions() async {
     setState(() => _isLoading = true);
     try {
-      final response = await SupabaseService.getApiConfiguration();
-      if (response['success'] == true) {
-        final data = response['data'];
-        setState(() {
-          _paytacaEnabled = data['enabled'] ?? false;
-          _xpubKeyController.text = data['xpub_key'] ?? '';
-          _walletHashController.text = data['wallet_hash'] ?? '';
-          _webhookUrlController.text = data['webhook_url'] ?? '';
-          _connectionStatus = _paytacaEnabled ? 'Connected' : 'Disabled';
+      final response = await SupabaseService.adminClient
+          .from('top_up_qr')
+          .select('*')
+          .order('amount', ascending: true);
 
-          // PayMongo
-          _paymongoEnabled = data['paymongo_enabled'] ?? false;
-          _pmPublicKeyController.text = data['paymongo_public_key'] ?? '';
-          _pmSecretKeyController.text = data['paymongo_secret_key'] ?? '';
-          _pmWebhookSecretController.text =
-              data['paymongo_webhook_secret'] ?? '';
-          _paymongoProvider = data['paymongo_provider'] ?? 'gcash';
+      setState(() {
+        _topUpOptions = List<Map<String, dynamic>>.from(response);
+        _isLoading = false;
+      });
+    } catch (e) {
+      print("Error loading top-up options: $e");
+      _showToast('Error loading top-up options: $e');
+      setState(() => _isLoading = false);
+    }
+  }
+
+  /// Pick image from gallery
+  Future<void> _pickImage() async {
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+
+      if (image != null) {
+        setState(() {
+          _selectedImage = File(image.path);
         });
       }
     } catch (e) {
-      print("Error loading configuration: $e");
+      _showToast('Error picking image: $e');
+    }
+  }
+
+  /// Upload QR image to storage bucket
+  Future<String?> _uploadQrImage(File imageFile, double amount) async {
+    try {
+      final bytes = await imageFile.readAsBytes();
+      final fileName =
+          'qr_${amount.toStringAsFixed(0)}_${DateTime.now().millisecondsSinceEpoch}.png';
+
+      await SupabaseService.adminClient.storage
+          .from('E-wallet_QR')
+          .uploadBinary(fileName, bytes);
+
+      // Get public URL
+      final publicUrl = SupabaseService.adminClient.storage
+          .from('E-wallet_QR')
+          .getPublicUrl(fileName);
+
+      return publicUrl;
+    } catch (e) {
+      print("Error uploading QR image: $e");
+      _showToast('Error uploading image: $e');
+      return null;
+    }
+  }
+
+  /// Delete QR image from storage
+  Future<void> _deleteQrImage(String imageUrl) async {
+    try {
+      // Extract filename from URL
+      final uri = Uri.parse(imageUrl);
+      final fileName = uri.pathSegments.last;
+
+      await SupabaseService.adminClient.storage.from('E-wallet_QR').remove([
+        fileName,
+      ]);
+    } catch (e) {
+      print("Error deleting QR image: $e");
+    }
+  }
+
+  /// Save new top-up option
+  Future<void> _saveTopUpOption() async {
+    if (_amountController.text.isEmpty) {
+      _showToast('Please enter an amount');
+      return;
+    }
+
+    if (_selectedImage == null && !_isEditMode) {
+      _showToast('Please select a QR code image');
+      return;
+    }
+
+    final amount = double.tryParse(_amountController.text);
+    if (amount == null || amount <= 0) {
+      _showToast('Please enter a valid amount');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      String? qrImageUrl;
+
+      // Upload new image if selected
+      if (_selectedImage != null) {
+        qrImageUrl = await _uploadQrImage(_selectedImage!, amount);
+        if (qrImageUrl == null) {
+          setState(() => _isLoading = false);
+          return;
+        }
+      }
+
+      if (_isEditMode && _editingId != null) {
+        // Update existing record
+        final updateData = {
+          'amount': amount,
+          'description': _descriptionController.text.trim(),
+          'updated_at': DateTime.now().toIso8601String(),
+        };
+
+        // Only update image if new one was selected
+        if (qrImageUrl != null) {
+          // Delete old image
+          final oldOption = _topUpOptions.firstWhere(
+            (o) => o['id'] == _editingId,
+          );
+          if (oldOption['qr_image_url'] != null) {
+            await _deleteQrImage(oldOption['qr_image_url']);
+          }
+          updateData['qr_image_url'] = qrImageUrl;
+        }
+
+        await SupabaseService.adminClient
+            .from('top_up_qr')
+            .update(updateData)
+            .eq('id', _editingId!);
+
+        _showToast('Top-up option updated successfully');
+      } else {
+        // Insert new record
+        await SupabaseService.adminClient.from('top_up_qr').insert({
+          'amount': amount,
+          'description': _descriptionController.text.trim(),
+          'qr_image_url': qrImageUrl,
+          'is_active': true,
+          'created_at': DateTime.now().toIso8601String(),
+        });
+
+        _showToast('Top-up option added successfully');
+      }
+
+      // Clear form and reload
+      _clearForm();
+      await _loadTopUpOptions();
+    } catch (e) {
+      print("Error saving top-up option: $e");
+      _showToast('Error saving: $e');
     } finally {
       setState(() => _isLoading = false);
+    }
+  }
+
+  /// Delete top-up option
+  Future<void> _deleteTopUpOption(int id, String? imageUrl) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Delete Top-Up Option'),
+            content: const Text(
+              'Are you sure you want to delete this top-up option?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      // Delete image from storage
+      if (imageUrl != null) {
+        await _deleteQrImage(imageUrl);
+      }
+
+      // Delete record from database
+      await SupabaseService.adminClient.from('top_up_qr').delete().eq('id', id);
+
+      _showToast('Top-up option deleted successfully');
+      await _loadTopUpOptions();
+    } catch (e) {
+      print("Error deleting top-up option: $e");
+      _showToast('Error deleting: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  /// Edit top-up option
+  void _editTopUpOption(Map<String, dynamic> option) {
+    setState(() {
+      _isEditMode = true;
+      _editingId = option['id'];
+      _amountController.text = option['amount'].toString();
+      _descriptionController.text = option['description'] ?? '';
+    });
+
+    // Scroll to top
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 300),
+      );
+    });
+  }
+
+  /// Clear form
+  void _clearForm() {
+    setState(() {
+      _amountController.clear();
+      _descriptionController.clear();
+      _selectedImage = null;
+      _isEditMode = false;
+      _editingId = null;
+    });
+  }
+
+  /// Toggle active status
+  Future<void> _toggleActiveStatus(int id, bool currentStatus) async {
+    try {
+      await SupabaseService.adminClient
+          .from('top_up_qr')
+          .update({
+            'is_active': !currentStatus,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', id);
+
+      await _loadTopUpOptions();
+    } catch (e) {
+      _showToast('Error updating status: $e');
     }
   }
 
@@ -95,67 +306,33 @@ class _ApiConfigurationScreenState extends State<ApiConfigurationScreen>
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: const Text(
-          'API Configuration',
+          'E-wallet Payment Configuration',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
         ),
         backgroundColor: evsuRed,
         foregroundColor: Colors.white,
         elevation: 0,
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          indicatorColor: Colors.white,
-          tabs: const [Tab(text: 'Paytaca'), Tab(text: 'PayMongo')],
-        ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          // Paytaca Tab
-          SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildStatusCard(),
-                const SizedBox(height: 24),
-                _buildConfigurationSection(),
-                const SizedBox(height: 24),
-                _buildApiKeysSection(),
-                const SizedBox(height: 24),
-                _buildWebhookSection(),
-                const SizedBox(height: 32),
-                _buildActionButtons(),
-                const SizedBox(height: 24),
-                _buildTestSection(),
-              ],
-            ),
-          ),
-          // PayMongo Tab
-          SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildPaymongoStatusCard(),
-                const SizedBox(height: 24),
-                _buildPaymongoConfigSection(),
-                const SizedBox(height: 24),
-                _buildPaymongoKeysSection(),
-                const SizedBox(height: 24),
-                _buildPaymongoWebhookSection(),
-                const SizedBox(height: 32),
-                _buildPaymongoActionButtons(),
-              ],
-            ),
-          ),
-        ],
-      ),
+      body:
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildHeaderCard(),
+                    const SizedBox(height: 24),
+                    _buildAddEditForm(),
+                    const SizedBox(height: 24),
+                    _buildTopUpOptionsList(),
+                  ],
+                ),
+              ),
     );
   }
 
-  Widget _buildStatusCard() {
+  Widget _buildHeaderCard() {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -184,15 +361,11 @@ class _ApiConfigurationScreenState extends State<ApiConfigurationScreen>
                   color: Colors.white.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(
-                  Icons.currency_bitcoin,
-                  color: Colors.white,
-                  size: 24,
-                ),
+                child: const Icon(Icons.qr_code, color: Colors.white, size: 24),
               ),
               const SizedBox(width: 12),
               const Text(
-                'Paytaca Integration',
+                'E-wallet Top-Up Management',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 20,
@@ -202,1099 +375,416 @@ class _ApiConfigurationScreenState extends State<ApiConfigurationScreen>
             ],
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatusIndicator(
-                  'Status',
-                  _connectionStatus,
-                  _getStatusColor(),
+          const Text(
+            'Manage QR codes for different top-up amounts. Students will see these options when they want to top up their balance.',
+            style: TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, color: Colors.white70, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Total Options: ${_topUpOptions.length} | Active: ${_topUpOptions.where((o) => o['is_active'] == true).length}',
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildStatusIndicator(
-                  'Service',
-                  'Bitcoin Lightning',
-                  Colors.blue,
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildStatusIndicator(String label, String status, Color color) {
+  Widget _buildAddEditForm() {
     return Container(
-      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
-          const SizedBox(height: 4),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  status,
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  _isEditMode ? 'Edit Top-Up Option' : 'Add New Top-Up Option',
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildConfigurationSection() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(20),
-            child: Text(
-              'Paytaca Configuration',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            child: Row(
-              children: [
-                Icon(Icons.power_settings_new, color: evsuRed, size: 24),
-                const SizedBox(width: 16),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Enable Paytaca',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      Text(
-                        'Activate Bitcoin Lightning payment gateway',
-                        style: TextStyle(fontSize: 13, color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                ),
-                Switch(
-                  value: _paytacaEnabled,
-                  onChanged: (value) async {
-                    setState(() => _paytacaEnabled = value);
-                    await _saveEnabledState(); // Save only the enabled state
-                    _validateConfiguration(); // Update status display
-                  },
-                  activeColor: evsuRed,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildApiKeysSection() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Paytaca Configuration',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Enter your Paytaca wallet configuration details',
-              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 20),
-
-            // XPub Key Field
-            const Text(
-              'Extended Public Key (xpub)',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _xpubKeyController,
-              obscureText: !_showXpubKey,
-              decoration: InputDecoration(
-                hintText: 'xpub6...',
-                prefixIcon: Icon(Icons.vpn_key, color: evsuRed),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _showXpubKey ? Icons.visibility : Icons.visibility_off,
-                    color: Colors.grey,
-                  ),
-                  onPressed: () => setState(() => _showXpubKey = !_showXpubKey),
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: evsuRed, width: 2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              onChanged: (value) => _validateConfiguration(),
-            ),
-
-            const SizedBox(height: 20),
-
-            // Wallet Hash Field
-            const Text(
-              'Wallet Hash',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _walletHashController,
-              obscureText: !_showWalletHash,
-              decoration: InputDecoration(
-                hintText: 'wallet_hash_...',
-                prefixIcon: Icon(Icons.fingerprint, color: evsuRed),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _showWalletHash ? Icons.visibility : Icons.visibility_off,
-                    color: Colors.grey,
-                  ),
-                  onPressed:
-                      () => setState(() => _showWalletHash = !_showWalletHash),
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: evsuRed, width: 2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              onChanged: (value) => _validateConfiguration(),
-            ),
-
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.info_outline, color: Colors.orange, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Get your xpub key and wallet hash from your Paytaca wallet settings.',
-                      style: TextStyle(fontSize: 12, color: Colors.orange),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildWebhookSection() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Webhook Configuration',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Webhook URL for Paytaca payment notifications',
-              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 20),
-
-            const Text(
-              'Webhook URL',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _webhookUrlController,
-              decoration: InputDecoration(
-                hintText: 'https://your-domain.com/paytaca-webhook',
-                prefixIcon: Icon(Icons.webhook, color: evsuRed),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.copy, color: Colors.grey),
-                  onPressed: () {
-                    Clipboard.setData(
-                      ClipboardData(text: _webhookUrlController.text),
-                    );
-                    _showToast('Webhook URL copied to clipboard');
-                  },
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: evsuRed, width: 2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              onChanged: (value) => _validateConfiguration(),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.warning_amber, color: Colors.orange, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Configure this webhook URL in your Paytaca wallet to receive payment notifications.',
-                      style: TextStyle(fontSize: 12, color: Colors.orange),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // PayMongo UI
-  Widget _buildPaymongoStatusCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [evsuRed, evsuRed.withOpacity(0.8)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: evsuRed.withOpacity(0.3),
-            blurRadius: 15,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(Icons.payment, color: Colors.white, size: 24),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                'PayMongo Integration',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatusIndicator(
-                  'Status',
-                  _paymongoEnabled ? 'Enabled' : 'Disabled',
-                  _paymongoEnabled ? Colors.green : Colors.grey,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildStatusIndicator(
-                  'Provider',
-                  _paymongoProvider.toUpperCase(),
-                  Colors.blue,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPaymongoConfigSection() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(20),
-            child: Text(
-              'PayMongo Configuration',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            child: Row(
-              children: [
-                Icon(Icons.power_settings_new, color: evsuRed, size: 24),
-                const SizedBox(width: 16),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Enable PayMongo',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      Text(
-                        'Activate PayMongo payment gateway',
-                        style: TextStyle(fontSize: 13, color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                ),
-                Switch(
-                  value: _paymongoEnabled,
-                  onChanged:
-                      (value) => setState(() => _paymongoEnabled = value),
-                  activeColor: evsuRed,
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Payment Provider',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                     color: Colors.black87,
                   ),
                 ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: _paymongoProvider,
-                  items: const [
-                    DropdownMenuItem(value: 'gcash', child: Text('GCash')),
-                    DropdownMenuItem(value: 'maya', child: Text('Maya')),
-                    DropdownMenuItem(value: 'grabpay', child: Text('GrabPay')),
+                const Spacer(),
+                if (_isEditMode)
+                  TextButton.icon(
+                    onPressed: _clearForm,
+                    icon: const Icon(Icons.close, size: 18),
+                    label: const Text('Cancel'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.red),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Amount Field
+            const Text(
+              'Top-Up Amount (₱)',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: InputDecoration(
+                hintText: 'Enter amount (e.g., 100.00)',
+                prefixIcon: const Icon(Icons.attach_money, color: evsuRed),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: const BorderSide(color: evsuRed, width: 2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Description Field
+            const Text(
+              'Description (Optional)',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _descriptionController,
+              decoration: InputDecoration(
+                hintText: 'e.g., Recommended for students',
+                prefixIcon: const Icon(Icons.description, color: evsuRed),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: const BorderSide(color: evsuRed, width: 2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // QR Code Image
+            const Text(
+              'QR Code Image',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            if (_selectedImage != null)
+              Container(
+                height: 200,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey[300]!),
+                ),
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(
+                        _selectedImage!,
+                        width: double.infinity,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: IconButton(
+                        onPressed: () => setState(() => _selectedImage = null),
+                        icon: const Icon(Icons.close, color: Colors.white),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.red,
+                        ),
+                      ),
+                    ),
                   ],
-                  onChanged: (value) {
-                    if (value != null)
-                      setState(() => _paymongoProvider = value);
+                ),
+              )
+            else
+              GestureDetector(
+                onTap: _pickImage,
+                child: Container(
+                  height: 150,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.grey[300]!,
+                      style: BorderStyle.solid,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.qr_code_2, size: 48, color: Colors.grey[400]),
+                      const SizedBox(height: 8),
+                      Text(
+                        _isEditMode
+                            ? 'Tap to change QR code image'
+                            : 'Tap to upload QR code image',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: 20),
+
+            // Save Button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isLoading ? null : _saveTopUpOption,
+                icon: Icon(_isEditMode ? Icons.save : Icons.add),
+                label: Text(_isEditMode ? 'Update Option' : 'Add Option'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: evsuRed,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopUpOptionsList() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Existing Top-Up Options',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            if (_topUpOptions.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(40),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.qr_code_scanner,
+                        size: 64,
+                        color: Colors.grey[400],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No top-up options yet',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Add your first top-up option above',
+                        style: TextStyle(color: Colors.grey[500], fontSize: 14),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _topUpOptions.length,
+                itemBuilder: (context, index) {
+                  final option = _topUpOptions[index];
+                  return _buildTopUpOptionCard(option);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopUpOptionCard(Map<String, dynamic> option) {
+    final amount = (option['amount'] as num).toDouble();
+    final isActive = option['is_active'] ?? true;
+    final qrImageUrl = option['qr_image_url'];
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isActive ? Colors.white : Colors.grey[100],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isActive ? evsuRed.withOpacity(0.3) : Colors.grey[300]!,
+        ),
+      ),
+      child: Row(
+        children: [
+          // QR Code Image
+          if (qrImageUrl != null)
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey[300]!),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  qrImageUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Icon(Icons.broken_image, color: Colors.grey[400]);
                   },
-                  decoration: InputDecoration(
-                    prefixIcon: Icon(
-                      Icons.account_balance_wallet,
-                      color: evsuRed,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderSide: BorderSide(color: evsuRed, width: 2),
-                      borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            )
+          else
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: Colors.grey[200],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.qr_code, color: Colors.grey[400], size: 40),
+            ),
+
+          const SizedBox(width: 16),
+
+          // Details
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '₱${amount.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: isActive ? evsuRed : Colors.grey,
+                  ),
+                ),
+                if (option['description'] != null &&
+                    option['description'].toString().isNotEmpty)
+                  Text(
+                    option['description'],
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isActive ? Colors.green[50] : Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    isActive ? 'Active' : 'Inactive',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: isActive ? Colors.green[700] : Colors.grey[600],
                     ),
                   ),
                 ),
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildPaymongoKeysSection() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'PayMongo API Keys',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Public Key',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _pmPublicKeyController,
-              obscureText: !_showPmPublic,
-              decoration: InputDecoration(
-                hintText: 'pk_test_...',
-                prefixIcon: Icon(Icons.vpn_key, color: evsuRed),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _showPmPublic ? Icons.visibility : Icons.visibility_off,
-                    color: Colors.grey,
-                  ),
-                  onPressed:
-                      () => setState(() => _showPmPublic = !_showPmPublic),
+          // Actions
+          Column(
+            children: [
+              IconButton(
+                onPressed: () => _toggleActiveStatus(option['id'], isActive),
+                icon: Icon(
+                  isActive ? Icons.visibility : Icons.visibility_off,
+                  color: isActive ? Colors.green : Colors.grey,
                 ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: evsuRed, width: 2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                tooltip: isActive ? 'Deactivate' : 'Activate',
               ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Secret Key',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
+              IconButton(
+                onPressed: () => _editTopUpOption(option),
+                icon: const Icon(Icons.edit, color: Colors.blue),
+                tooltip: 'Edit',
               ),
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _pmSecretKeyController,
-              obscureText: !_showPmSecret,
-              decoration: InputDecoration(
-                hintText: 'sk_test_...',
-                prefixIcon: Icon(Icons.lock, color: evsuRed),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _showPmSecret ? Icons.visibility : Icons.visibility_off,
-                    color: Colors.grey,
-                  ),
-                  onPressed:
-                      () => setState(() => _showPmSecret = !_showPmSecret),
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: evsuRed, width: 2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Webhook Secret',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _pmWebhookSecretController,
-              obscureText: !_showPmWebhook,
-              decoration: InputDecoration(
-                hintText: 'whsec_...',
-                prefixIcon: Icon(Icons.webhook, color: evsuRed),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _showPmWebhook ? Icons.visibility : Icons.visibility_off,
-                    color: Colors.grey,
-                  ),
-                  onPressed:
-                      () => setState(() => _showPmWebhook = !_showPmWebhook),
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: evsuRed, width: 2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPaymongoWebhookSection() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Webhook Notes',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.info_outline, color: Colors.orange, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Configure the webhook endpoint and use the provided secret to verify signatures.',
-                      style: TextStyle(fontSize: 12, color: Colors.orange),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPaymongoActionButtons() {
-    return Row(
-      children: [
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed:
-                _isLoading
-                    ? null
-                    : () async {
-                      setState(() => _isLoading = true);
-                      try {
-                        final result =
-                            await SupabaseService.savePaymongoConfiguration(
-                              enabled: _paymongoEnabled,
-                              publicKey: _pmPublicKeyController.text.trim(),
-                              secretKey: _pmSecretKeyController.text.trim(),
-                              webhookSecret:
-                                  _pmWebhookSecretController.text.trim(),
-                              provider: _paymongoProvider,
-                            );
-                        if (result['success'] == true) {
-                          _showToast(
-                            'PayMongo configuration saved successfully',
-                          );
-                        } else {
-                          _showToast(
-                            'Error saving PayMongo: ${result['message']}',
-                          );
-                        }
-                      } catch (e) {
-                        _showToast('Error saving PayMongo configuration: $e');
-                      } finally {
-                        setState(() => _isLoading = false);
-                      }
-                    },
-            icon:
-                _isLoading
-                    ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                    : const Icon(Icons.save),
-            label: Text(
-              _isLoading ? 'Saving...' : 'Save PayMongo Configuration',
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: evsuRed,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed:
-                _isLoading
-                    ? null
-                    : () {
-                      setState(() {
-                        _paymongoEnabled = false;
-                        _pmPublicKeyController.clear();
-                        _pmSecretKeyController.clear();
-                        _pmWebhookSecretController.clear();
-                        _paymongoProvider = 'gcash';
-                      });
-                    },
-            icon: const Icon(Icons.refresh),
-            label: const Text('Reset'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: evsuRed,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildActionButtons() {
-    return Row(
-      children: [
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: _isLoading ? null : _saveConfiguration,
-            icon:
-                _isLoading
-                    ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                    : const Icon(Icons.save),
-            label: Text(_isLoading ? 'Saving...' : 'Save Configuration'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: evsuRed,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: _isLoading ? null : _resetConfiguration,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Reset'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: evsuRed,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTestSection() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Configuration Status',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Current Paytaca configuration status',
-              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color:
-                    _paytacaEnabled
-                        ? Colors.green.withOpacity(0.1)
-                        : Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color:
-                      _paytacaEnabled
-                          ? Colors.green.withOpacity(0.3)
-                          : Colors.orange.withOpacity(0.3),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    _paytacaEnabled ? Icons.check_circle : Icons.warning,
-                    color: _paytacaEnabled ? Colors.green : Colors.orange,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _connectionStatus,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: _getStatusColor(),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _getStatusDescription(),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _validateConfiguration() {
-    String xpubKey = _xpubKeyController.text.trim();
-    String walletHash = _walletHashController.text.trim();
-    String webhookUrl = _webhookUrlController.text.trim();
-
-    bool isValid =
-        xpubKey.isNotEmpty && walletHash.isNotEmpty && webhookUrl.isNotEmpty;
-
-    String status;
-    if (_paytacaEnabled) {
-      if (isValid) {
-        status = 'Configured';
-      } else {
-        status = 'Enabled (Incomplete)';
-      }
-    } else {
-      status = 'Disabled';
-    }
-
-    setState(() {
-      _connectionStatus = status;
-    });
-  }
-
-  Color _getStatusColor() {
-    if (_connectionStatus == 'Configured') {
-      return Colors.green;
-    } else if (_connectionStatus == 'Enabled (Incomplete)') {
-      return Colors.orange;
-    } else if (_connectionStatus == 'Disabled') {
-      return Colors.grey;
-    } else {
-      return Colors.orange;
-    }
-  }
-
-  String _getStatusDescription() {
-    if (_connectionStatus == 'Configured') {
-      return 'Top-up functionality is available to users';
-    } else if (_connectionStatus == 'Enabled (Incomplete)') {
-      return 'Paytaca is enabled but configuration is incomplete. Fill all fields and save.';
-    } else if (_connectionStatus == 'Disabled') {
-      return 'Top-up functionality is disabled for users';
-    } else {
-      return 'Configuration status unknown';
-    }
-  }
-
-  Future<void> _saveEnabledState() async {
-    try {
-      final response = await SupabaseService.saveApiConfiguration(
-        enabled: _paytacaEnabled,
-        xpubKey: _xpubKeyController.text.trim(),
-        walletHash: _walletHashController.text.trim(),
-        webhookUrl: _webhookUrlController.text.trim(),
-      );
-
-      if (response['success'] == true) {
-        print("DEBUG: Paytaca enabled state saved: $_paytacaEnabled");
-      } else {
-        print("DEBUG: Error saving enabled state: ${response['message']}");
-        _showToast('Error saving enabled state: ${response['message']}');
-      }
-    } catch (e) {
-      print("DEBUG: Error saving enabled state: $e");
-      _showToast('Error saving enabled state: $e');
-    }
-  }
-
-  Future<void> _saveConfiguration() async {
-    setState(() => _isLoading = true);
-
-    try {
-      final response = await SupabaseService.saveApiConfiguration(
-        enabled: _paytacaEnabled,
-        xpubKey: _xpubKeyController.text.trim(),
-        walletHash: _walletHashController.text.trim(),
-        webhookUrl: _webhookUrlController.text.trim(),
-      );
-
-      if (response['success'] == true) {
-        _showToast('Configuration saved successfully');
-        setState(() {
-          _connectionStatus = _paytacaEnabled ? 'Connected' : 'Disabled';
-        });
-      } else {
-        _showToast('Error saving configuration: ${response['message']}');
-      }
-    } catch (e) {
-      _showToast('Error saving configuration: $e');
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  void _resetConfiguration() {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Reset Configuration'),
-            content: const Text(
-              'This will reset all Paytaca settings to default. Are you sure?',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  setState(() => _isLoading = true);
-
-                  try {
-                    await SupabaseService.saveApiConfiguration(
-                      enabled: false,
-                      xpubKey: '',
-                      walletHash: '',
-                      webhookUrl: '',
-                    );
-
-                    setState(() {
-                      _xpubKeyController.clear();
-                      _walletHashController.clear();
-                      _webhookUrlController.clear();
-                      _paytacaEnabled = false;
-                      _connectionStatus = 'Not Connected';
-                    });
-                    _showToast('Configuration reset successfully');
-                  } catch (e) {
-                    _showToast('Error resetting configuration: $e');
-                  } finally {
-                    setState(() => _isLoading = false);
-                  }
-                },
-                style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
-                child: const Text(
-                  'Reset',
-                  style: TextStyle(color: Colors.white),
-                ),
+              IconButton(
+                onPressed: () => _deleteTopUpOption(option['id'], qrImageUrl),
+                icon: const Icon(Icons.delete, color: Colors.red),
+                tooltip: 'Delete',
               ),
             ],
           ),
+        ],
+      ),
     );
   }
 

@@ -793,9 +793,19 @@ class _SecurityPrivacyScreenState extends State<SecurityPrivacyScreen> {
       });
 
       if (result['success']) {
+        // Refresh user session data to ensure it's up to date
+        try {
+          await SessionService.refreshUserData();
+        } catch (e) {
+          print(
+            'Warning: Failed to refresh user data after password change: $e',
+          );
+          // Not critical - password is updated, user can continue
+        }
+
         Navigator.pop(context); // Close dialog
         _showSuccessSnackBar(
-          'Password changed successfully! You can now use your new password to login.',
+          'Password changed successfully! Your session has been updated.',
         );
 
         // Clear form

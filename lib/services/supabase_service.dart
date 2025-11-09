@@ -1164,6 +1164,82 @@ for all to authenticated using (true) with check (true);
     }
   }
 
+  /// Get aggregated totals for manual cash top-ups vs GCash verification top-ups.
+  ///
+  /// Optional [start] and [end] parameters filter the date range (inclusive start, exclusive end).
+  static Future<Map<String, dynamic>> getTopUpChannelTotals({
+    DateTime? start,
+    DateTime? end,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      final Map<String, dynamic> filter = {};
+      if (start != null) {
+        filter['created_at.gte'] = start.toIso8601String();
+      }
+      if (end != null) {
+        filter['created_at.lt'] = end.toIso8601String();
+      }
+
+      final manualQuery = client
+          .from('top_up_transactions')
+          .select('amount, created_at')
+          .eq('transaction_type', 'top_up');
+      if (filter.containsKey('created_at.gte')) {
+        manualQuery.gte('created_at', filter['created_at.gte']);
+      }
+      if (filter.containsKey('created_at.lt')) {
+        manualQuery.lt('created_at', filter['created_at.lt']);
+      }
+      final manualResults = await manualQuery;
+
+      final gcashQuery = client
+          .from('top_up_transactions')
+          .select('amount, created_at')
+          .eq('transaction_type', 'top_up_gcash');
+      if (filter.containsKey('created_at.gte')) {
+        gcashQuery.gte('created_at', filter['created_at.gte']);
+      }
+      if (filter.containsKey('created_at.lt')) {
+        gcashQuery.lt('created_at', filter['created_at.lt']);
+      }
+      final gcashResults = await gcashQuery;
+
+      double manualTotal = 0.0;
+      for (final entry in manualResults) {
+        manualTotal += (entry['amount'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      double gcashTotal = 0.0;
+      for (final entry in gcashResults) {
+        gcashTotal += (entry['amount'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      return {
+        'success': true,
+        'data': {
+          'manual_total': manualTotal,
+          'manual_count': manualResults.length,
+          'gcash_total': gcashTotal,
+          'gcash_count': gcashResults.length,
+        },
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Error fetching top-up channel totals: ${e.toString()}',
+        'data': {
+          'manual_total': 0.0,
+          'manual_count': 0,
+          'gcash_total': 0.0,
+          'gcash_count': 0,
+        },
+      };
+    }
+  }
+
   /// Get loan analysis data with real loan amounts and counts
   static Future<Map<String, dynamic>> getLoanAnalysis({
     DateTime? start,
@@ -1732,72 +1808,189 @@ for all to authenticated using (true) with check (true);
     try {
       await SupabaseService.initialize();
 
-      print("DEBUG: Fetching service transactions");
-      print("DEBUG: Date range - start: $start, end: $end, limit: $limit");
+      final int fetchLimit = limit <= 0 ? 50 : limit;
+      final int topupLimit = ((fetchLimit * 2) > 200 ? 200 : (fetchLimit * 2));
 
-      // First, let's try to get just the basic columns to see what exists
-      try {
-        final testQuery = await client
-            .from('service_transactions')
-            .select('*')
-            .limit(1);
-        print(
-          "DEBUG: Test query successful, columns available: ${testQuery.isNotEmpty ? testQuery.first.keys.toList() : 'No data'}",
-        );
-      } catch (e) {
-        print("DEBUG: Test query failed: $e");
-      }
+      print(
+        "DEBUG: Fetching admin transactions (services, top-ups, loans) with limit $fetchLimit",
+      );
 
-      // Get service transactions with service account and student info
-      final transactions = await client
+      // Build service transactions query
+      var serviceQuery = client
           .from('service_transactions')
           .select(
-            'id, total_amount, created_at, student_id, service_account_id, service_accounts!service_transactions_service_account_id_fkey(service_name)',
+            '''
+              id,
+              total_amount,
+              created_at,
+              student_id,
+              service_accounts!service_transactions_service_account_id_fkey(service_name)
+            '''.trim(),
+          );
+
+      // Build top-up (including loan disbursements) transactions query
+      final List<String> trackedTopupTypes = [
+        'top_up',
+        'top_up_gcash',
+        'loan_disbursement',
+      ];
+
+      var topupQuery = client
+          .from('top_up_transactions')
+          .select(
+            '''
+              id,
+              student_id,
+              amount,
+              previous_balance,
+              new_balance,
+              transaction_type,
+              processed_by,
+              notes,
+              created_at
+            '''.trim(),
           )
-          .order('created_at', ascending: false)
-          .limit(limit);
+          .inFilter('transaction_type', trackedTopupTypes);
 
-      print("DEBUG: Query returned ${transactions.length} transactions");
-
-      if (transactions.isNotEmpty) {
-        print("DEBUG: First transaction sample: ${transactions.first}");
+      if (start != null) {
+        final isoStart = start.toIso8601String();
+        serviceQuery = serviceQuery.gte('created_at', isoStart);
+        topupQuery = topupQuery.gte('created_at', isoStart);
       }
 
-      // Format transactions for display
-      List<Map<String, dynamic>> formattedTransactions = [];
-      for (var transaction in transactions) {
+      if (end != null) {
+        final isoEnd = end.toIso8601String();
+        serviceQuery = serviceQuery.lt('created_at', isoEnd);
+        topupQuery = topupQuery.lt('created_at', isoEnd);
+      }
+
+      final serviceTransactions = await serviceQuery
+          .order('created_at', ascending: false)
+          .limit(fetchLimit);
+      final topupTransactions = await topupQuery
+          .order('created_at', ascending: false)
+          .limit(topupLimit);
+
+      print(
+        "DEBUG: serviceTransactions fetched: ${serviceTransactions.length}",
+      );
+      print("DEBUG: topupTransactions fetched: ${topupTransactions.length}");
+
+      if (topupTransactions.isNotEmpty) {
+        final Map<String, int> topupTypeCounts = {};
+        for (final transaction in topupTransactions) {
+          final type =
+              transaction['transaction_type']?.toString() ?? 'unknown_type';
+          topupTypeCounts[type] = (topupTypeCounts[type] ?? 0) + 1;
+        }
+        print('DEBUG: topupTransactions type distribution: $topupTypeCounts');
+      } else {
+        print('DEBUG: No top_up_transactions returned by query');
+      }
+
+      final Set<String> studentIds = {};
+
+      for (final transaction in serviceTransactions) {
+        final studentId = transaction['student_id']?.toString();
+        if (studentId != null && studentId.isNotEmpty) {
+          studentIds.add(studentId);
+        }
+      }
+
+      for (final transaction in topupTransactions) {
+        final studentId = transaction['student_id']?.toString();
+        if (studentId != null && studentId.isNotEmpty) {
+          studentIds.add(studentId);
+        }
+      }
+
+      final studentNames = await _fetchStudentNames(studentIds);
+
+      final List<Map<String, dynamic>> combinedTransactions = [];
+
+      for (final transaction in serviceTransactions) {
+        final studentId = transaction['student_id']?.toString() ?? 'Unknown';
         final serviceName =
             transaction['service_accounts']?['service_name']?.toString() ??
-            'Unknown Store';
-        final studentId = transaction['student_id']?.toString() ?? 'Unknown ID';
-
-        // For now, we'll use the student_id as the student name since we can't join auth_students
-        // This can be improved later by making a separate query to get student names
-        final studentName = 'Student $studentId';
-
-        formattedTransactions.add({
+            'Unknown Service';
+        combinedTransactions.add({
           'id': transaction['id']?.toString() ?? 'Unknown',
           'amount': (transaction['total_amount'] as num?)?.toDouble() ?? 0.0,
           'created_at': transaction['created_at']?.toString() ?? '',
           'service_name': serviceName,
-          'student_name': studentName,
+          'student_name': studentNames[studentId] ?? 'Student $studentId',
           'student_id': studentId,
-          'status': 'completed', // All service transactions are completed
-          'type': 'payment', // All service transactions are payments
+          'status': 'completed',
+          'category': 'transactions',
+          'transaction_type': 'service_payment',
+          'notes': null,
+          'previous_balance': null,
+          'new_balance': null,
+          'processed_by': serviceName,
         });
       }
 
-      print("DEBUG: Formatted ${formattedTransactions.length} transactions");
+      for (final transaction in topupTransactions) {
+        final studentId = transaction['student_id']?.toString() ?? 'Unknown';
+        final transactionType =
+            transaction['transaction_type']?.toString() ?? 'top_up';
+        final category =
+            transactionType == 'loan_disbursement' ? 'loan' : 'top_up';
+        final processedBy =
+            transaction['processed_by']?.toString() ??
+            (category == 'loan' ? 'Loan Program' : 'Top-up Desk');
+
+        combinedTransactions.add({
+          'id': transaction['id']?.toString() ?? 'Unknown',
+          'amount': (transaction['amount'] as num?)?.toDouble() ?? 0.0,
+          'created_at': transaction['created_at']?.toString() ?? '',
+          'service_name': processedBy,
+          'student_name': studentNames[studentId] ?? 'Student $studentId',
+          'student_id': studentId,
+          'status': 'completed',
+          'category': category,
+          'transaction_type': transactionType,
+          'notes': transaction['notes']?.toString(),
+          'previous_balance':
+              (transaction['previous_balance'] as num?)?.toDouble(),
+          'new_balance': (transaction['new_balance'] as num?)?.toDouble(),
+          'processed_by': processedBy,
+        });
+      }
+
+      combinedTransactions.sort((a, b) {
+        final bTimestamp =
+            DateTime.tryParse(b['created_at']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        final aTimestamp =
+            DateTime.tryParse(a['created_at']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        return bTimestamp.compareTo(aTimestamp);
+      });
+
+      final int combinedTakeLimit = fetchLimit + topupLimit;
+      final List<Map<String, dynamic>> limitedTransactions =
+          combinedTransactions.take(combinedTakeLimit).toList();
+
+      final int topUpGcashCount =
+          limitedTransactions.where((transaction) {
+            return (transaction['transaction_type']?.toString() ?? '')
+                    .toLowerCase() ==
+                'top_up_gcash';
+          }).length;
+      print(
+        'DEBUG: Combined transactions prepared: ${limitedTransactions.length} (top_up_gcash count: $topUpGcashCount)',
+      );
 
       return {
         'success': true,
         'data': {
-          'transactions': formattedTransactions,
-          'total_count': formattedTransactions.length,
+          'transactions': limitedTransactions,
+          'total_count': combinedTransactions.length,
         },
       };
     } catch (e) {
-      print("DEBUG: Error fetching service transactions: $e");
+      print("DEBUG: Error fetching combined admin transactions: $e");
       return {
         'success': false,
         'message': 'Error fetching service transactions: $e',
@@ -1979,6 +2172,40 @@ for all to authenticated using (true) with check (true);
   }
 
   /// Get user by email from auth_students table
+  /// Get user by student ID (for admin use)
+  static Future<Map<String, dynamic>> getUserByStudentId(String studentId) async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await adminClient
+          .from(SupabaseConfig.authStudentsTable)
+          .select('*')
+          .eq('student_id', studentId)
+          .maybeSingle();
+
+      if (response == null) {
+        return {
+          'success': false,
+          'message': 'Student not found',
+        };
+      }
+
+      // Decrypt sensitive data
+      final decryptedData = EncryptionService.decryptUserData(response);
+
+      return {
+        'success': true,
+        'data': decryptedData,
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to get user: ${e.toString()}',
+      };
+    }
+  }
+
   static Future<Map<String, dynamic>> getUserByEmail(String email) async {
     try {
       // Encrypt the email to match against stored encrypted values
@@ -2174,22 +2401,25 @@ for all to authenticated using (true) with check (true);
     }
   }
 
-  /// Update user password in auth_students table (used for student login authentication)
+  /// Update user password in both auth.users (Supabase Auth) and auth_students table
+  /// Uses Supabase Auth for password verification and updates both systems
   static Future<Map<String, dynamic>> updateUserPassword({
     required String studentId,
     required String currentPassword,
     required String newPassword,
   }) async {
     try {
-      // First, verify the current password by checking auth_students table
-      // Get the current user data using student_id
-      final userResponse = await adminClient
-          .from(SupabaseConfig.authStudentsTable)
-          .select('password, student_id, name')
-          .eq('student_id', studentId)
-          .limit(1);
+      await SupabaseService.initialize();
 
-      if (userResponse.isEmpty) {
+      // Step 1: Get user data from auth_students table (including email and auth_user_id)
+      final userResponse =
+          await adminClient
+              .from(SupabaseConfig.authStudentsTable)
+              .select('*')
+              .eq('student_id', studentId)
+              .maybeSingle();
+
+      if (userResponse == null) {
         return {
           'success': false,
           'error': 'User not found',
@@ -2197,56 +2427,208 @@ for all to authenticated using (true) with check (true);
         };
       }
 
-      final userData = userResponse.first;
-      final storedHashedPassword = userData['password'];
+      // Decrypt email from auth_students table
+      final decryptedData = EncryptionService.decryptUserData(userResponse);
+      final email = decryptedData['email']?.toString();
+      final authUserId = userResponse['auth_user_id']?.toString();
 
-      // Verify current password matches the stored hash
-      if (!_verifyPassword(currentPassword, storedHashedPassword)) {
+      if (email == null || email.isEmpty) {
         return {
           'success': false,
-          'error': 'Invalid current password',
-          'message': 'Current password is incorrect',
+          'error': 'User email not found',
+          'message': 'User email not found. Please contact support.',
         };
       }
 
-      // Hash the new password for storage in auth_students table
-      final hashedPassword = _hashPassword(newPassword);
+      if (authUserId == null || authUserId.isEmpty) {
+        return {
+          'success': false,
+          'error': 'Auth user ID not found',
+          'message':
+              'Authentication user ID not found. Please contact support.',
+        };
+      }
 
-      // Update ONLY the password in auth_students table (not auth.users)
-      await adminClient
-          .from(SupabaseConfig.authStudentsTable)
-          .update({
-            'password': hashedPassword,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('student_id', studentId);
+      // Step 2: Verify current password and update in Supabase Auth
+      try {
+        // Check if user is already authenticated with matching auth_user_id
+        final currentUser = client.auth.currentUser;
+        final isAlreadyAuthenticated =
+            currentUser != null && currentUser.id == authUserId;
 
-      print(
-        'DEBUG: Password updated in auth_students table for student_id: $studentId',
-      );
+        if (isAlreadyAuthenticated) {
+          // User is already authenticated - verify current password by attempting sign in
+          // We'll use a temporary sign-in to verify, then restore session
+          try {
+            final verifyResponse = await client.auth.signInWithPassword(
+              email: email,
+              password: currentPassword,
+            );
+
+            if (verifyResponse.user == null ||
+                verifyResponse.user!.id != authUserId) {
+              // Password verification failed
+              return {
+                'success': false,
+                'error': 'Invalid current password',
+                'message': 'Current password is incorrect. Please try again.',
+              };
+            }
+          } catch (verifyError) {
+            String verifyErrorString = verifyError.toString().toLowerCase();
+            if (verifyErrorString.contains('invalid login credentials') ||
+                verifyErrorString.contains('invalid_credentials')) {
+              return {
+                'success': false,
+                'error': 'Invalid current password',
+                'message': 'Current password is incorrect. Please try again.',
+              };
+            }
+            rethrow;
+          }
+        } else {
+          // User is not authenticated - sign in with current password to verify
+          final verifyResponse = await client.auth.signInWithPassword(
+            email: email,
+            password: currentPassword,
+          );
+
+          if (verifyResponse.user == null) {
+            return {
+              'success': false,
+              'error': 'Invalid current password',
+              'message': 'Current password is incorrect. Please try again.',
+            };
+          }
+
+          // Verify the authenticated user matches the auth_user_id
+          if (verifyResponse.user!.id != authUserId) {
+            await client.auth.signOut();
+            return {
+              'success': false,
+              'error': 'Authentication mismatch',
+              'message':
+                  'Authentication verification failed. Please contact support.',
+            };
+          }
+        }
+
+        // Step 3: Update password in Supabase Auth (auth.users)
+        // The user is now authenticated (either already was or just signed in)
+        await client.auth.updateUser(UserAttributes(password: newPassword));
+
+        print(
+          'DEBUG: Password updated in auth.users for student_id: $studentId',
+        );
+      } catch (authError) {
+        String errorString = authError.toString().toLowerCase();
+
+        if (errorString.contains('invalid login credentials') ||
+            errorString.contains('invalid_credentials') ||
+            errorString.contains('invalid password')) {
+          return {
+            'success': false,
+            'error': 'Invalid current password',
+            'message': 'Current password is incorrect. Please try again.',
+          };
+        }
+
+        if (errorString.contains('password should be at least') ||
+            errorString.contains('password_too_short') ||
+            errorString.contains('password is required')) {
+          return {
+            'success': false,
+            'error': 'Password too weak',
+            'message': 'New password must be at least 6 characters long.',
+          };
+        }
+
+        // If Supabase Auth update fails, still try to update auth_students
+        // but log the error and return failure
+        print('ERROR: Failed to update password in auth.users: $authError');
+        return {
+          'success': false,
+          'error': 'Failed to update password in authentication system',
+          'message':
+              'Failed to update password. Please try again or contact support.',
+        };
+      }
+
+      // Step 4: Update hashed password in auth_students table (for consistency/backup)
+      // Note: This is done after Supabase Auth update succeeds
+      try {
+        final hashedPassword = _hashPassword(newPassword);
+        await adminClient
+            .from(SupabaseConfig.authStudentsTable)
+            .update({
+              'password': hashedPassword,
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .eq('student_id', studentId);
+
+        print(
+          'DEBUG: Password updated in auth_students table for student_id: $studentId',
+        );
+      } catch (dbError) {
+        print(
+          'ERROR: Failed to update password in auth_students table: $dbError',
+        );
+        // Password is updated in auth.users, but not in auth_students
+        // This is not ideal but won't break login since we use Supabase Auth
+        // Log the error for debugging
+      }
+
+      // Step 5: Re-authenticate with new password to refresh session
+      // This ensures the session is valid with the new password
+      try {
+        await client.auth.signInWithPassword(
+          email: email,
+          password: newPassword,
+        );
+        print('DEBUG: Re-authenticated with new password successfully');
+      } catch (reauthError) {
+        print(
+          'WARNING: Failed to re-authenticate with new password: $reauthError',
+        );
+        // This is not critical - the password is updated, user can login again
+        // The session might be invalid, but the password change was successful
+      }
 
       return {
         'success': true,
-        'message': 'Password updated successfully in auth_students table',
-        'student_id': userData['student_id'],
-        'student_name': userData['name'],
+        'message':
+            'Password updated successfully! You can now use your new password to login.',
+        'student_id': userResponse['student_id'],
       };
     } catch (e) {
       String errorMessage = e.toString();
+      String errorString = errorMessage.toLowerCase();
 
-      if (errorMessage.contains('Invalid login credentials')) {
+      if (errorString.contains('invalid login credentials') ||
+          errorString.contains('invalid_credentials') ||
+          errorString.contains('invalid password')) {
         return {
           'success': false,
           'error': 'Invalid current password',
-          'message': 'Current password is incorrect',
+          'message': 'Current password is incorrect. Please try again.',
         };
       }
 
-      if (errorMessage.contains('Password should be at least')) {
+      if (errorString.contains('password should be at least') ||
+          errorString.contains('password_too_short')) {
         return {
           'success': false,
           'error': 'Password too weak',
-          'message': 'Password must be at least 6 characters long',
+          'message': 'New password must be at least 6 characters long.',
+        };
+      }
+
+      if (errorString.contains('user not found') ||
+          errorString.contains('user_not_found')) {
+        return {
+          'success': false,
+          'error': 'User not found',
+          'message': 'No account found with this student ID.',
         };
       }
 
@@ -2389,6 +2771,141 @@ for all to authenticated using (true) with check (true);
         'success': false,
         'error': e.toString(),
         'message': 'Admin credentials update failed: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get current admin information
+  static Future<Map<String, dynamic>> getCurrentAdminInfo() async {
+    try {
+      print('DEBUG [getCurrentAdminInfo]: Querying admin_accounts table...');
+      final response =
+          await SupabaseService.client
+              .from('admin_accounts')
+              .select('id, username, full_name, email')
+              .limit(1)
+              .single();
+
+      print('DEBUG [getCurrentAdminInfo]: Query successful');
+      print('DEBUG [getCurrentAdminInfo]: Username: ${response['username']}');
+      print('DEBUG [getCurrentAdminInfo]: ID: ${response['id']}');
+
+      return {'success': true, 'data': response};
+    } catch (e) {
+      print('DEBUG [getCurrentAdminInfo]: Query failed');
+      print('DEBUG [getCurrentAdminInfo]: Error: $e');
+      print('DEBUG [getCurrentAdminInfo]: Error type: ${e.runtimeType}');
+
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to get admin info: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Reset database - Delete all data and reset IDs (Admin only)
+  /// This function requires admin password authentication for security
+  static Future<Map<String, dynamic>> resetDatabase({
+    required String adminPassword,
+    required String adminUsername,
+  }) async {
+    try {
+      print('DEBUG [resetDatabase]: Starting password verification');
+      print('DEBUG [resetDatabase]: Username: $adminUsername');
+      print('DEBUG [resetDatabase]: Password length: ${adminPassword.length}');
+
+      // Use the same authentication method as login page
+      print(
+        'DEBUG [resetDatabase]: Calling authenticateAdmin (same as login)...',
+      );
+      final authResult = await authenticateAdmin(
+        username: adminUsername,
+        password: adminPassword,
+      );
+
+      print(
+        'DEBUG [resetDatabase]: Authentication result: ${authResult['success']}',
+      );
+
+      if (!authResult['success']) {
+        print('DEBUG [resetDatabase]: Authentication FAILED');
+        print('DEBUG [resetDatabase]: Error: ${authResult['error']}');
+        print('DEBUG [resetDatabase]: Message: ${authResult['message']}');
+        return {
+          'success': false,
+          'error': 'Authentication failed',
+          'message': 'Invalid admin password. Please try again.',
+        };
+      }
+
+      print('DEBUG [resetDatabase]: Authentication SUCCESSFUL');
+      print('DEBUG [resetDatabase]: Admin data: ${authResult['data']}');
+      print('DEBUG [resetDatabase]: Proceeding with database reset...');
+
+      // Call the reset_database function using admin client to bypass RLS
+      print(
+        'DEBUG [resetDatabase]: Calling reset_database_admin RPC with admin client...',
+      );
+      final response = await SupabaseService.adminClient.rpc(
+        'reset_database_admin',
+        params: {'admin_user': adminUsername},
+      );
+
+      print('DEBUG [resetDatabase]: RPC response received: $response');
+      print('DEBUG [resetDatabase]: Response type: ${response.runtimeType}');
+
+      // Check if response is a Map and has success field
+      bool isSuccess = false;
+      String? responseMessage;
+
+      if (response is Map<String, dynamic>) {
+        isSuccess = response['success'] == true;
+        responseMessage = response['message']?.toString();
+        print('DEBUG [resetDatabase]: Response success: $isSuccess');
+        print('DEBUG [resetDatabase]: Response message: $responseMessage');
+      } else {
+        print('DEBUG [resetDatabase]: WARNING - Response is not a Map!');
+        print('DEBUG [resetDatabase]: Response value: $response');
+      }
+
+      if (!isSuccess) {
+        return {
+          'success': false,
+          'error': 'Database reset failed',
+          'message':
+              responseMessage ?? 'Database reset function returned failure',
+          'data': response,
+        };
+      }
+
+      // Log the admin activity (use admin client to bypass RLS)
+      try {
+        await SupabaseService.adminClient.from('admin_activity_log').insert({
+          'admin_username': adminUsername,
+          'action': 'Reset Database',
+          'description':
+              'All system tables were reset and IDs were reinitialized',
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+        print('DEBUG [resetDatabase]: Activity logged successfully');
+      } catch (logError) {
+        // Continue even if logging fails
+        print('Warning: Failed to log admin activity: $logError');
+      }
+
+      return {
+        'success': true,
+        'message':
+            responseMessage ??
+            'Database reset successfully. All data deleted and IDs reset.',
+        'data': response,
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Database reset failed: ${e.toString()}',
       };
     }
   }
@@ -3576,6 +4093,338 @@ for all to authenticated using (true) with check (true);
     }
   }
 
+  // ================================================================
+  // WITHDRAWAL REQUEST OPERATIONS (Admin Approval System)
+  // ================================================================
+
+  /// Create a withdrawal request (pending admin approval)
+  /// Validates balance but does not deduct it until approved
+  static Future<Map<String, dynamic>> createWithdrawalRequest({
+    required String studentId,
+    required double amount,
+    required String transferType, // 'Gcash' or 'Cash'
+    String? gcashNumber,
+    String? gcashAccountName,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      if (amount <= 0) {
+        return {
+          'success': false,
+          'message': 'Withdrawal amount must be greater than zero',
+        };
+      }
+
+      // Validate transfer type
+      if (transferType != 'Gcash' && transferType != 'Cash') {
+        return {
+          'success': false,
+          'message': 'Invalid transfer type. Must be Gcash or Cash',
+        };
+      }
+
+      // Validate Gcash fields if transfer type is Gcash
+      if (transferType == 'Gcash') {
+        if (gcashNumber == null || gcashNumber.trim().isEmpty) {
+          return {
+            'success': false,
+            'message': 'GCash number is required for GCash withdrawals',
+          };
+        }
+        if (gcashAccountName == null || gcashAccountName.trim().isEmpty) {
+          return {
+            'success': false,
+            'message': 'GCash account name is required for GCash withdrawals',
+          };
+        }
+      }
+
+      // Get user's current balance to validate
+      final userResponse = await adminClient
+          .from(SupabaseConfig.authStudentsTable)
+          .select('balance')
+          .eq('student_id', studentId)
+          .single();
+
+      final currentBalance =
+          (userResponse['balance'] as num?)?.toDouble() ?? 0.0;
+
+      if (currentBalance < amount) {
+        return {
+          'success': false,
+          'message':
+              'Insufficient balance. Current balance: ₱${currentBalance.toStringAsFixed(2)}',
+        };
+      }
+
+      // Create withdrawal request with status 'Pending'
+      final requestResponse = await adminClient
+          .from('withdrawal_requests')
+          .insert({
+            'student_id': studentId,
+            'amount': amount,
+            'transfer_type': transferType,
+            'gcash_number': transferType == 'Gcash' ? gcashNumber : null,
+            'gcash_account_name':
+                transferType == 'Gcash' ? gcashAccountName : null,
+            'status': 'Pending',
+          })
+          .select()
+          .single();
+
+      return {
+        'success': true,
+        'data': requestResponse,
+        'message':
+            'Withdrawal request submitted successfully. Waiting for admin approval.',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to create withdrawal request: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get withdrawal requests for a user
+  static Future<Map<String, dynamic>> getUserWithdrawalRequests({
+    required String studentId,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      final response = await adminClient
+          .from('withdrawal_requests')
+          .select('*')
+          .eq('student_id', studentId)
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'Withdrawal requests retrieved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message':
+            'Failed to retrieve withdrawal requests: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Get all withdrawal requests (for admin view)
+  static Future<Map<String, dynamic>> getAllWithdrawalRequests({
+    String? status, // Filter by status: 'Pending', 'Approved', 'Rejected'
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      var query = adminClient.from('withdrawal_requests').select('*');
+
+      if (status != null) {
+        query = query.eq('status', status);
+      }
+
+      final response = await query
+          .order('created_at', ascending: false)
+          .range(offset, offset + limit - 1);
+
+      return {
+        'success': true,
+        'data': response,
+        'message': 'Withdrawal requests retrieved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message':
+            'Failed to retrieve withdrawal requests: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Approve a withdrawal request (admin function)
+  /// Deducts balance and creates a withdrawal transaction
+  static Future<Map<String, dynamic>> approveWithdrawalRequest({
+    required int requestId,
+    required String processedBy,
+    String? adminNotes,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      // Get the withdrawal request
+      final requestResponse = await adminClient
+          .from('withdrawal_requests')
+          .select('*')
+          .eq('id', requestId)
+          .single();
+
+      final studentId = requestResponse['student_id']?.toString();
+      final amount = (requestResponse['amount'] as num?)?.toDouble() ?? 0.0;
+      final transferType = requestResponse['transfer_type']?.toString() ?? '';
+      final status = requestResponse['status']?.toString() ?? '';
+
+      if (status != 'Pending') {
+        return {
+          'success': false,
+          'message': 'Withdrawal request is not pending',
+        };
+      }
+
+      if (studentId == null) {
+        return {
+          'success': false,
+          'message': 'Student ID not found in request',
+        };
+      }
+
+      // Get user's current balance
+      final userResponse = await adminClient
+          .from(SupabaseConfig.authStudentsTable)
+          .select('balance')
+          .eq('student_id', studentId)
+          .single();
+
+      final currentBalance =
+          (userResponse['balance'] as num?)?.toDouble() ?? 0.0;
+
+      // If balance is insufficient, auto-reject the request
+      if (currentBalance < amount) {
+        // Auto-reject the request due to insufficient balance
+        await adminClient
+            .from('withdrawal_requests')
+            .update({
+              'status': 'Rejected',
+              'processed_at': DateTime.now().toIso8601String(),
+              'processed_by': processedBy,
+              'admin_notes':
+                  'Auto-rejected: Insufficient balance. Current balance: ₱${currentBalance.toStringAsFixed(2)}, Requested: ₱${amount.toStringAsFixed(2)}',
+            })
+            .eq('id', requestId);
+
+        return {
+          'success': false,
+          'auto_rejected': true,
+          'message':
+              'Request auto-rejected due to insufficient balance. Current balance: ₱${currentBalance.toStringAsFixed(2)}, Requested: ₱${amount.toStringAsFixed(2)}',
+          'current_balance': currentBalance,
+          'requested_amount': amount,
+        };
+      }
+
+      // Deduct from user balance
+      final newUserBalance = currentBalance - amount;
+      await adminClient
+          .from(SupabaseConfig.authStudentsTable)
+          .update({'balance': newUserBalance})
+          .eq('student_id', studentId);
+
+      // Create withdrawal transaction record
+      final transactionResponse = await adminClient
+          .from('withdrawal_transactions')
+          .insert({
+            'student_id': studentId,
+            'amount': amount,
+            'transaction_type': 'Withdraw to Admin',
+            'metadata': {
+              'transfer_type': transferType,
+              'gcash_number': requestResponse['gcash_number'],
+              'gcash_account_name': requestResponse['gcash_account_name'],
+              'request_id': requestId,
+            },
+          })
+          .select()
+          .single();
+
+      // Update withdrawal request status
+      await adminClient
+          .from('withdrawal_requests')
+          .update({
+            'status': 'Approved',
+            'processed_at': DateTime.now().toIso8601String(),
+            'processed_by': processedBy,
+            'admin_notes': adminNotes,
+          })
+          .eq('id', requestId);
+
+      return {
+        'success': true,
+        'data': {
+          'transaction': transactionResponse,
+          'new_balance': newUserBalance,
+        },
+        'message': 'Withdrawal request approved successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to approve withdrawal request: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Reject a withdrawal request (admin function)
+  /// Updates status but does not deduct balance
+  static Future<Map<String, dynamic>> rejectWithdrawalRequest({
+    required int requestId,
+    required String processedBy,
+    String? adminNotes,
+  }) async {
+    try {
+      await SupabaseService.initialize();
+
+      // Get the withdrawal request
+      final requestResponse = await adminClient
+          .from('withdrawal_requests')
+          .select('*')
+          .eq('id', requestId)
+          .single();
+
+      final status = requestResponse['status']?.toString() ?? '';
+
+      if (status != 'Pending') {
+        return {
+          'success': false,
+          'message': 'Withdrawal request is not pending',
+        };
+      }
+
+      // Update withdrawal request status
+      await adminClient
+          .from('withdrawal_requests')
+          .update({
+            'status': 'Rejected',
+            'processed_at': DateTime.now().toIso8601String(),
+            'processed_by': processedBy,
+            'admin_notes': adminNotes,
+          })
+          .eq('id', requestId);
+
+      return {
+        'success': true,
+        'message': 'Withdrawal request rejected successfully',
+      };
+    } catch (e) {
+      return {
+        'success': false,
+        'error': e.toString(),
+        'message': 'Failed to reject withdrawal request: ${e.toString()}',
+      };
+    }
+  }
+
   // Analytics / Income calculations
   /// Compute income summary within an optional date range [start, end).
   /// - Top-up Income: fee per top-up (₱50-₱100 => ₱1 flat, ₱100-₱1000 => 1% of amount)
@@ -3674,6 +4523,53 @@ for all to authenticated using (true) with check (true);
         'error': e.toString(),
         'message': 'Failed to compute income summary: ${e.toString()}',
       };
+    }
+  }
+
+  static Future<Map<String, String>> _fetchStudentNames(
+    Set<String> studentIds,
+  ) async {
+    if (studentIds.isEmpty) {
+      return {};
+    }
+
+    try {
+      final response = await adminClient
+          .from('auth_students')
+          .select('student_id, name')
+          .inFilter('student_id', studentIds.toList());
+
+      final Map<String, String> names = {};
+
+      for (final row in response) {
+        final id = row['student_id']?.toString();
+        if (id == null || id.isEmpty) {
+          continue;
+        }
+
+        String name = row['name']?.toString().trim() ?? '';
+
+        if (name.isNotEmpty && EncryptionService.looksLikeEncryptedData(name)) {
+          try {
+            name = EncryptionService.decryptData(name).trim();
+          } catch (decryptionError) {
+            print(
+              'DEBUG: Failed to decrypt student name for $id: $decryptionError',
+            );
+          }
+        }
+
+        if (name.isEmpty) {
+          name = 'Student $id';
+        }
+
+        names[id] = name;
+      }
+
+      return names;
+    } catch (e) {
+      print('DEBUG: Error fetching student names for transactions: $e');
+      return {};
     }
   }
 

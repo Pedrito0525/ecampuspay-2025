@@ -1,4 +1,10 @@
+import 'dart:io';
+import 'package:excel/excel.dart' as excel;
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/animation.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+
 import '../services/supabase_service.dart';
 
 class ReportsTab extends StatefulWidget {
@@ -19,6 +25,10 @@ class _ReportsTabState extends State<ReportsTab> {
   double _totalIncome = 0.0;
   int _topupCount = 0;
   int _loanDisbursementCount = 0;
+  double _manualTopUpTotal = 0.0;
+  double _gcashTopUpTotal = 0.0;
+  int _manualTopUpCount = 0;
+  int _gcashTopUpCount = 0;
 
   // Balance overview data
   double _totalStudentBalance = 0.0;
@@ -33,6 +43,7 @@ class _ReportsTabState extends State<ReportsTab> {
   List<Map<String, dynamic>> _loanAnalysis = [];
   List<Map<String, dynamic>> _vendorTransactionCount = [];
   bool _analysisLoading = false;
+  bool _exportingExcel = false;
 
   @override
   void initState() {
@@ -46,20 +57,57 @@ class _ReportsTabState extends State<ReportsTab> {
     setState(() => _loading = true);
     try {
       final range = _getDateRangeFor(_selectedPeriod);
-      final res = await SupabaseService.getIncomeSummary(
+
+      double topUpIncome = _topUpIncome;
+      double loanIncome = _loanIncome;
+      double totalIncome = _totalIncome;
+      int topupCount = _topupCount;
+      int loanDisbursementCount = _loanDisbursementCount;
+      double manualTopUpTotal = _manualTopUpTotal;
+      double gcashTopUpTotal = _gcashTopUpTotal;
+      int manualTopUpCount = _manualTopUpCount;
+      int gcashTopUpCount = _gcashTopUpCount;
+
+      final incomeResult = await SupabaseService.getIncomeSummary(
         start: range['start'],
         end: range['end'],
       );
-      if (res['success'] == true) {
-        final data = res['data'] as Map<String, dynamic>;
+      if (incomeResult['success'] == true) {
+        final data = incomeResult['data'] as Map<String, dynamic>;
+        topUpIncome = (data['top_up_income'] as num?)?.toDouble() ?? 0.0;
+        loanIncome = (data['loan_income'] as num?)?.toDouble() ?? 0.0;
+        totalIncome = (data['total_income'] as num?)?.toDouble() ?? 0.0;
+        final counts = data['counts'] as Map<String, dynamic>?;
+        topupCount = counts != null ? (counts['topups'] as int? ?? 0) : 0;
+        loanDisbursementCount =
+            counts != null ? (counts['paid_loans'] as int? ?? 0) : 0;
+      }
+
+      final channelResult = await SupabaseService.getTopUpChannelTotals(
+        start: range['start'],
+        end: range['end'],
+      );
+      if (channelResult['success'] == true) {
+        final channelData = channelResult['data'] as Map<String, dynamic>;
+        manualTopUpTotal =
+            (channelData['manual_total'] as num?)?.toDouble() ?? 0.0;
+        manualTopUpCount = channelData['manual_count'] as int? ?? 0;
+        gcashTopUpTotal =
+            (channelData['gcash_total'] as num?)?.toDouble() ?? 0.0;
+        gcashTopUpCount = channelData['gcash_count'] as int? ?? 0;
+      }
+
+      if (mounted) {
         setState(() {
-          _topUpIncome = (data['top_up_income'] as num?)?.toDouble() ?? 0.0;
-          _loanIncome = (data['loan_income'] as num?)?.toDouble() ?? 0.0;
-          _totalIncome = (data['total_income'] as num?)?.toDouble() ?? 0.0;
-          final counts = data['counts'] as Map<String, dynamic>?;
-          _topupCount = counts != null ? (counts['topups'] as int? ?? 0) : 0;
-          _loanDisbursementCount =
-              counts != null ? (counts['paid_loans'] as int? ?? 0) : 0;
+          _topUpIncome = topUpIncome;
+          _loanIncome = loanIncome;
+          _totalIncome = totalIncome;
+          _topupCount = topupCount;
+          _loanDisbursementCount = loanDisbursementCount;
+          _manualTopUpTotal = manualTopUpTotal;
+          _manualTopUpCount = manualTopUpCount;
+          _gcashTopUpTotal = gcashTopUpTotal;
+          _gcashTopUpCount = gcashTopUpCount;
         });
       }
     } catch (_) {
@@ -180,6 +228,32 @@ class _ReportsTabState extends State<ReportsTab> {
     return '₱${value.toStringAsFixed(2)}';
   }
 
+  String _formatDateForExport(DateTime dateTime) {
+    final local = dateTime.toLocal();
+    final year = local.year.toString().padLeft(4, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+
+    return '$year-$month-$day $hour:$minute';
+  }
+
+  void _showSnackBarMessage(
+    String message, {
+    Color backgroundColor = evsuRed,
+    SnackBarAction? action,
+  }) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: backgroundColor,
+        action: action,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -210,10 +284,21 @@ class _ReportsTabState extends State<ReportsTab> {
                     ],
                   ),
                 ),
-                IconButton(
-                  onPressed: _exportReports,
-                  icon: const Icon(Icons.file_download, color: evsuRed),
-                ),
+                _exportingExcel
+                    ? SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          evsuRed,
+                        ),
+                      ),
+                    )
+                    : IconButton(
+                      onPressed: _exportReports,
+                      icon: const Icon(Icons.file_download, color: evsuRed),
+                    ),
               ],
             ),
             const SizedBox(height: 24),
@@ -356,32 +441,50 @@ class _ReportsTabState extends State<ReportsTab> {
                               color: Colors.green,
                               icon: Icons.credit_card,
                             ),
+                            const SizedBox(height: 12),
+                            _TopUpChannelBreakdown(
+                              manualTotal: _formatCurrency(_manualTopUpTotal),
+                              manualCount: _manualTopUpCount,
+                              gcashTotal: _formatCurrency(_gcashTopUpTotal),
+                              gcashCount: _gcashTopUpCount,
+                            ),
                           ],
                         );
                       } else {
                         // Desktop: Side by side
-                        return Row(
+                        return Column(
                           children: [
-                            Expanded(
-                              child: _IncomeMetricItem(
-                                title: 'Top-up Income',
-                                value: _formatCurrency(_topUpIncome),
-                                count: _topupCount,
-                                countLabel: 'Top-ups',
-                                color: Colors.blue,
-                                icon: Icons.account_balance_wallet,
-                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _IncomeMetricItem(
+                                    title: 'Top-up Income',
+                                    value: _formatCurrency(_topUpIncome),
+                                    count: _topupCount,
+                                    countLabel: 'Top-ups',
+                                    color: Colors.blue,
+                                    icon: Icons.account_balance_wallet,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _IncomeMetricItem(
+                                    title: 'Loan Income',
+                                    value: _formatCurrency(_loanIncome),
+                                    count: _loanDisbursementCount,
+                                    countLabel: 'Loan Disbursements',
+                                    color: Colors.green,
+                                    icon: Icons.credit_card,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _IncomeMetricItem(
-                                title: 'Loan Income',
-                                value: _formatCurrency(_loanIncome),
-                                count: _loanDisbursementCount,
-                                countLabel: 'Loan Disbursements',
-                                color: Colors.green,
-                                icon: Icons.credit_card,
-                              ),
+                            const SizedBox(height: 12),
+                            _TopUpChannelBreakdown(
+                              manualTotal: _formatCurrency(_manualTopUpTotal),
+                              manualCount: _manualTopUpCount,
+                              gcashTotal: _formatCurrency(_gcashTopUpTotal),
+                              gcashCount: _gcashTopUpCount,
                             ),
                           ],
                         );
@@ -1017,22 +1120,266 @@ class _ReportsTabState extends State<ReportsTab> {
     );
   }
 
-  void _exportAs(String format) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Exporting $_selectedPeriod report as $format...'),
-        backgroundColor: evsuRed,
-      ),
-    );
+  Future<void> _exportAs(String format) async {
+    if (format == 'Excel') {
+      await _exportSummaryAsExcel();
+      return;
+    }
+
+    _showSnackBarMessage('Exporting $_selectedPeriod report as $format...');
+  }
+
+  Future<void> _exportSummaryAsExcel() async {
+    if (_exportingExcel) {
+      _showSnackBarMessage('An export is already in progress. Please wait...');
+      return;
+    }
+
+    if (mounted) {
+      setState(() => _exportingExcel = true);
+    }
+
+    try {
+      final balanceResult = await SupabaseService.getBalanceOverview();
+      if (balanceResult['success'] != true) {
+        throw Exception(
+          balanceResult['message'] ?? 'Failed to fetch balance overview',
+        );
+      }
+
+      final channelResult = await SupabaseService.getTopUpChannelTotals(
+        start: null,
+        end: null,
+      );
+      if (channelResult['success'] != true) {
+        throw Exception(
+          channelResult['message'] ?? 'Failed to fetch top-up totals',
+        );
+      }
+
+      final balanceData =
+          (balanceResult['data'] as Map<String, dynamic>?) ??
+          <String, dynamic>{};
+      final channelData =
+          (channelResult['data'] as Map<String, dynamic>?) ??
+          <String, dynamic>{};
+
+      final double totalStudentBalance =
+          (balanceData['total_student_balance'] as num?)?.toDouble() ?? 0.0;
+      final double totalServiceBalance =
+          (balanceData['total_service_balance'] as num?)?.toDouble() ?? 0.0;
+      final double totalSystemBalance =
+          (balanceData['total_system_balance'] as num?)?.toDouble() ??
+          (totalStudentBalance + totalServiceBalance);
+      final double manualTopUpTotal =
+          (channelData['manual_total'] as num?)?.toDouble() ?? 0.0;
+      final double gcashTopUpTotal =
+          (channelData['gcash_total'] as num?)?.toDouble() ?? 0.0;
+      final double totalTopUps = manualTopUpTotal + gcashTopUpTotal;
+
+      final excel.Excel workbook = excel.Excel.createExcel();
+      const String sheetName = 'Summary';
+      final excel.Sheet sheet = workbook[sheetName];
+      workbook.setDefaultSheet(sheetName);
+
+      final DateTime now = DateTime.now();
+
+      int rowIndex = 0;
+      // Title row - make it bigger by merging cells
+      final titleCell = sheet.cell(
+        excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: rowIndex),
+      );
+      titleCell.value = excel.TextCellValue('Overall Balance Reports');
+      // Merge title across 2 columns for bigger appearance
+      sheet.merge(
+        excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: rowIndex),
+        excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIndex),
+      );
+      rowIndex++;
+      rowIndex++;
+      sheet
+          .cell(
+            excel.CellIndex.indexByColumnRow(
+              columnIndex: 0,
+              rowIndex: rowIndex,
+            ),
+          )
+          .value = excel.TextCellValue('Generated At');
+      sheet
+          .cell(
+            excel.CellIndex.indexByColumnRow(
+              columnIndex: 1,
+              rowIndex: rowIndex,
+            ),
+          )
+          .value = excel.TextCellValue(_formatDateForExport(now));
+
+      rowIndex += 2;
+      sheet
+          .cell(
+            excel.CellIndex.indexByColumnRow(
+              columnIndex: 0,
+              rowIndex: rowIndex,
+            ),
+          )
+          .value = excel.TextCellValue('Metric');
+      sheet
+          .cell(
+            excel.CellIndex.indexByColumnRow(
+              columnIndex: 1,
+              rowIndex: rowIndex,
+            ),
+          )
+          .value = excel.TextCellValue('Amount (PHP)');
+      rowIndex++;
+
+      void writeMetric(String label, double value) {
+        sheet
+            .cell(
+              excel.CellIndex.indexByColumnRow(
+                columnIndex: 0,
+                rowIndex: rowIndex,
+              ),
+            )
+            .value = excel.TextCellValue(label);
+        sheet
+            .cell(
+              excel.CellIndex.indexByColumnRow(
+                columnIndex: 1,
+                rowIndex: rowIndex,
+              ),
+            )
+            .value = excel.DoubleCellValue(
+          double.parse(value.toStringAsFixed(2)),
+        );
+        rowIndex++;
+      }
+
+      writeMetric('Total Student Balance', totalStudentBalance);
+      writeMetric('Total Service Balance', totalServiceBalance);
+      writeMetric('Total System Balance', totalSystemBalance);
+      writeMetric('Manual Top-up Total', manualTopUpTotal);
+      writeMetric('GCash Top-up Total', gcashTopUpTotal);
+      writeMetric('Overall Top-up Total', totalTopUps);
+
+      final List<int>? bytes = workbook.encode();
+      if (bytes == null) {
+        throw Exception('Failed to generate Excel file data');
+      }
+
+      final String timestampSuffix =
+          '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+      final String defaultFileName =
+          'overall_balance_reports_$timestampSuffix.xlsx';
+
+      Directory? downloadsDir;
+      try {
+        if (Platform.isAndroid) {
+          downloadsDir = Directory('/storage/emulated/0/Download');
+          if (!await downloadsDir.exists()) {
+            downloadsDir = await getExternalStorageDirectory();
+          }
+        } else if (Platform.isIOS) {
+          downloadsDir = await getApplicationDocumentsDirectory();
+        } else if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+          downloadsDir = await getDownloadsDirectory();
+        }
+      } catch (_) {
+        downloadsDir = null;
+      }
+
+      bool saved = false;
+      String? savedPath;
+
+      if (downloadsDir != null) {
+        try {
+          final file = File('${downloadsDir.path}/$defaultFileName');
+          await file.writeAsBytes(bytes, flush: true);
+          saved = true;
+          savedPath = file.path;
+        } catch (_) {
+          saved = false;
+          savedPath = null;
+        }
+      }
+
+      if (!saved) {
+        try {
+          final outputPath = await FilePicker.platform.saveFile(
+            dialogTitle: 'Save Excel report',
+            fileName: defaultFileName,
+            type: FileType.custom,
+            allowedExtensions: ['xlsx'],
+          );
+
+          if (outputPath != null && outputPath.trim().isNotEmpty) {
+            final file = File(outputPath);
+            await file.writeAsBytes(bytes, flush: true);
+            saved = true;
+            savedPath = file.path;
+          }
+        } catch (_) {
+          saved = false;
+          savedPath = null;
+        }
+      }
+
+      if (!saved) {
+        throw Exception('Unable to save Excel file. Please try again.');
+      }
+
+      SnackBarAction? action;
+      if (savedPath != null && savedPath.isNotEmpty) {
+        final String resolvedPath = savedPath;
+        if (Platform.isWindows) {
+          action = SnackBarAction(
+            label: 'Open',
+            onPressed: () {
+              try {
+                Process.run('explorer', ['/select,', resolvedPath]);
+              } catch (_) {}
+            },
+          );
+        } else if (Platform.isMacOS) {
+          action = SnackBarAction(
+            label: 'Open',
+            onPressed: () {
+              try {
+                Process.run('open', ['-R', resolvedPath]);
+              } catch (_) {}
+            },
+          );
+        } else if (Platform.isLinux) {
+          action = SnackBarAction(
+            label: 'Open',
+            onPressed: () {
+              try {
+                final directoryPath = File(resolvedPath).parent.path;
+                Process.run('xdg-open', [directoryPath]);
+              } catch (_) {}
+            },
+          );
+        }
+      }
+
+      _showSnackBarMessage(
+        'Excel summary exported to ${savedPath ?? 'selected location'}.',
+        action: action,
+      );
+    } catch (e) {
+      _showSnackBarMessage(
+        'Excel export failed: $e',
+        backgroundColor: Colors.red,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _exportingExcel = false);
+      }
+    }
   }
 
   void _emailReport() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Preparing email report...'),
-        backgroundColor: evsuRed,
-      ),
-    );
+    _showSnackBarMessage('Preparing email report...');
   }
 }
 
@@ -1266,6 +1613,228 @@ class _IncomeMetricItem extends StatelessWidget {
                   fontSize: 12,
                   color: color.withOpacity(0.7),
                   fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TopUpChannelBreakdown extends StatelessWidget {
+  final String manualTotal;
+  final int manualCount;
+  final String gcashTotal;
+  final int gcashCount;
+
+  const _TopUpChannelBreakdown({
+    required this.manualTotal,
+    required this.manualCount,
+    required this.gcashTotal,
+    required this.gcashCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final screenSize = MediaQuery.of(context).size;
+    final isMobile = screenSize.width < 600;
+    final isTablet = screenSize.width >= 600 && screenSize.width < 1024;
+
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade300),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.payments,
+                color: _TopUpItem.evsuRed,
+                size: isMobile ? 18 : 20,
+              ),
+              SizedBox(width: isMobile ? 6 : 8),
+              Text(
+                'Top-up Channels',
+                style: TextStyle(
+                  fontSize: isMobile ? 13 : 14,
+                  fontWeight: FontWeight.w700,
+                  color: _TopUpItem.evsuRed,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: isMobile ? 12 : 16),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (isMobile) {
+                // Mobile: Stack vertically
+                return Column(
+                  children: [
+                    _TopUpChannelTile(
+                      label: 'Cash Desk',
+                      total: manualTotal,
+                      count: manualCount,
+                      color: Colors.blue,
+                      icon: Icons.attach_money,
+                      isMobile: true,
+                    ),
+                    SizedBox(height: isMobile ? 10 : 12),
+                    _TopUpChannelTile(
+                      label: 'GCash Verified',
+                      total: gcashTotal,
+                      count: gcashCount,
+                      color: Colors.deepPurple,
+                      icon: Icons.qr_code_scanner,
+                      isMobile: true,
+                    ),
+                  ],
+                );
+              } else {
+                // Tablet/Desktop: Side by side
+                return Row(
+                  children: [
+                    Expanded(
+                      child: _TopUpChannelTile(
+                        label: 'Cash Desk',
+                        total: manualTotal,
+                        count: manualCount,
+                        color: Colors.blue,
+                        icon: Icons.attach_money,
+                        isMobile: false,
+                      ),
+                    ),
+                    SizedBox(width: isTablet ? 10 : 12),
+                    Expanded(
+                      child: _TopUpChannelTile(
+                        label: 'GCash Verified',
+                        total: gcashTotal,
+                        count: gcashCount,
+                        color: Colors.deepPurple,
+                        icon: Icons.qr_code_scanner,
+                        isMobile: false,
+                      ),
+                    ),
+                  ],
+                );
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TopUpChannelTile extends StatelessWidget {
+  final String label;
+  final String total;
+  final int count;
+  final Color color;
+  final IconData icon;
+  final bool isMobile;
+
+  const _TopUpChannelTile({
+    required this.label,
+    required this.total,
+    required this.count,
+    required this.color,
+    required this.icon,
+    required this.isMobile,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 12 : 14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [color.withOpacity(0.12), color.withOpacity(0.06)],
+        ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.25), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Icon(icon, color: color, size: isMobile ? 18 : 20),
+              ),
+              SizedBox(width: isMobile ? 8 : 10),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: isMobile ? 12 : 13,
+                    fontWeight: FontWeight.w700,
+                    color: color,
+                    letterSpacing: 0.2,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: isMobile ? 12 : 14),
+          Text(
+            total,
+            style: TextStyle(
+              fontSize: isMobile ? 16 : 18,
+              fontWeight: FontWeight.bold,
+              color: color,
+              letterSpacing: 0.3,
+            ),
+          ),
+          SizedBox(height: isMobile ? 4 : 6),
+          Row(
+            children: [
+              Icon(
+                Icons.receipt_long,
+                size: isMobile ? 12 : 14,
+                color: color.withOpacity(0.7),
+              ),
+              SizedBox(width: isMobile ? 4 : 6),
+              Flexible(
+                child: Text(
+                  '$count ${count == 1 ? 'transaction' : 'transactions'}',
+                  style: TextStyle(
+                    fontSize: isMobile ? 11 : 12,
+                    color: color.withOpacity(0.75),
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],

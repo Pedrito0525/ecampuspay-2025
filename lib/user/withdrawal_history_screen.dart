@@ -33,42 +33,91 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> {
     });
 
     try {
-      Map<String, dynamic> result;
-
       if (widget.userType == 'user') {
         final studentId =
             SessionService.currentUserData?['student_id']?.toString();
         if (studentId == null) {
           throw Exception('Student ID not found');
         }
-        result = await SupabaseService.getUserWithdrawalHistory(
+
+        // Load both withdrawal transactions and withdrawal requests
+        final transactionsResult = await SupabaseService.getUserWithdrawalHistory(
           studentId: studentId,
           limit: 100,
         );
+
+        final requestsResult = await SupabaseService.getUserWithdrawalRequests(
+          studentId: studentId,
+          limit: 100,
+        );
+
+        List<Map<String, dynamic>> allWithdrawals = [];
+
+        // Add completed withdrawal transactions
+        if (transactionsResult['success'] == true) {
+          final transactions = List<Map<String, dynamic>>.from(
+            transactionsResult['data'] ?? [],
+          );
+          for (var transaction in transactions) {
+            allWithdrawals.add({
+              ...transaction,
+              'type': 'transaction', // Mark as completed transaction
+              'status': 'Completed',
+            });
+          }
+        }
+
+        // Add withdrawal requests (pending, approved, rejected)
+        if (requestsResult['success'] == true) {
+          final requests = List<Map<String, dynamic>>.from(
+            requestsResult['data'] ?? [],
+          );
+          for (var request in requests) {
+            allWithdrawals.add({
+              ...request,
+              'type': 'request', // Mark as request
+              'transaction_type': 'Withdraw to Admin',
+              'amount': request['amount'],
+            });
+          }
+        }
+
+        // Sort by created_at (most recent first)
+        allWithdrawals.sort((a, b) {
+          final aDate = a['created_at']?.toString() ?? '';
+          final bDate = b['created_at']?.toString() ?? '';
+          return bDate.compareTo(aDate);
+        });
+
+        setState(() {
+          _withdrawals = allWithdrawals;
+          _isLoading = false;
+        });
       } else {
+        // Service account withdrawal history (existing flow)
         final serviceIdStr =
             SessionService.currentUserData?['service_id']?.toString();
         if (serviceIdStr == null) {
           throw Exception('Service ID not found');
         }
         final serviceId = int.parse(serviceIdStr);
-        result = await SupabaseService.getServiceWithdrawalHistory(
+        final result = await SupabaseService.getServiceWithdrawalHistory(
           serviceAccountId: serviceId,
           limit: 100,
         );
-      }
 
-      if (result['success'] == true) {
-        setState(() {
-          _withdrawals = List<Map<String, dynamic>>.from(result['data'] ?? []);
-          _isLoading = false;
-        });
-      } else {
-        setState(() {
-          _errorMessage =
-              result['message'] ?? 'Failed to load withdrawal history';
-          _isLoading = false;
-        });
+        if (result['success'] == true) {
+          setState(() {
+            _withdrawals = List<Map<String, dynamic>>.from(result['data'] ?? []);
+            _isLoading = false;
+          });
+        } else {
+          setState(() {
+            _errorMessage =
+                result['message'] ?? 'Failed to load withdrawal history';
+            _isLoading = false;
+          });
+        }
       }
     } catch (e) {
       setState(() {
@@ -198,6 +247,9 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> {
         withdrawal['transaction_type']?.toString() ?? 'Unknown';
     final createdAt = withdrawal['created_at']?.toString();
     final metadata = withdrawal['metadata'] as Map<String, dynamic>?;
+    final withdrawalType = withdrawal['type']?.toString(); // 'transaction' or 'request'
+    final status = withdrawal['status']?.toString() ?? 'Completed';
+    final transferType = withdrawal['transfer_type']?.toString();
 
     DateTime? dateTime;
     if (createdAt != null) {
@@ -216,7 +268,49 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> {
     IconData icon = Icons.admin_panel_settings;
     Color iconColor = Colors.orange;
 
-    if (transactionType == 'Withdraw to Service') {
+    // Determine status badge color and text
+    Color statusColor;
+    String statusText;
+    Color statusBgColor;
+    Color statusBorderColor;
+
+    if (status == 'Pending') {
+      statusColor = Colors.orange;
+      statusText = 'Pending';
+      statusBgColor = Colors.orange[50]!;
+      statusBorderColor = Colors.orange[200]!;
+    } else if (status == 'Approved') {
+      statusColor = Colors.green;
+      statusText = 'Approved';
+      statusBgColor = Colors.green[50]!;
+      statusBorderColor = Colors.green[200]!;
+    } else if (status == 'Rejected') {
+      statusColor = Colors.red;
+      statusText = 'Rejected';
+      statusBgColor = Colors.red[50]!;
+      statusBorderColor = Colors.red[200]!;
+    } else {
+      // Completed (for transactions)
+      statusColor = Colors.green;
+      statusText = 'Completed';
+      statusBgColor = Colors.green[50]!;
+      statusBorderColor = Colors.green[200]!;
+    }
+
+    // Determine destination and subtitle based on withdrawal type
+    if (withdrawalType == 'request') {
+      // Withdrawal request
+      destination = 'Admin';
+      if (transferType == 'Gcash') {
+        destinationSubtitle = 'GCash transfer';
+        icon = Icons.account_balance_wallet;
+        iconColor = Colors.blue;
+      } else {
+        destinationSubtitle = 'Cash pickup';
+        icon = Icons.money;
+        iconColor = Colors.green;
+      }
+    } else if (transactionType == 'Withdraw to Service') {
       destination =
           metadata?['destination_service_name']?.toString() ??
           'Service Account';
@@ -265,7 +359,9 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Withdraw to $destination',
+                        withdrawalType == 'request'
+                            ? 'Withdraw to $destination'
+                            : 'Withdraw to $destination',
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -277,6 +373,20 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> {
                         destinationSubtitle,
                         style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                       ),
+                      // Show GCash details if it's a GCash request
+                      if (withdrawalType == 'request' &&
+                          transferType == 'Gcash' &&
+                          withdrawal['gcash_number'] != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            'GCash: ${withdrawal['gcash_number']}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[500],
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -298,16 +408,16 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> {
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.green[50],
+                        color: statusBgColor,
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: Colors.green[200]!),
+                        border: Border.all(color: statusBorderColor),
                       ),
-                      child: const Text(
-                        'Completed',
+                      child: Text(
+                        statusText,
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: Colors.green,
+                          color: statusColor,
                         ),
                       ),
                     ),
@@ -347,6 +457,36 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> {
                 ),
               ],
             ),
+            // Show admin notes if rejected
+            if (status == 'Rejected' && withdrawal['admin_notes'] != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.red[50],
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.red[200]!),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline,
+                          size: 16, color: Colors.red[700]),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Reason: ${withdrawal['admin_notes']}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.red[900],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),

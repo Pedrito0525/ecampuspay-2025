@@ -2002,112 +2002,362 @@ class _TopUpTabState extends State<TopUpTab>
   /// Show approve confirmation dialog
   void _showApproveDialog(Map<String, dynamic> request) {
     final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
     final isMobile = screenWidth < 600;
+    final isSmallPhone = screenWidth < 400;
 
     showDialog(
       context: context,
       builder:
-          (context) => AlertDialog(
-            contentPadding: EdgeInsets.all(isMobile ? 16 : 24),
-            title: Row(
-              children: [
-                Icon(
-                  Icons.check_circle,
-                  color: Colors.green,
-                  size: isMobile ? 24 : 28,
-                ),
-                SizedBox(width: isMobile ? 6 : 8),
-                Expanded(
-                  child: Text(
-                    'Approve Top-Up Request',
-                    style: TextStyle(
-                      fontSize: isMobile ? 16 : 20,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
+          (context) => Dialog(
+            insetPadding: EdgeInsets.symmetric(
+              horizontal:
+                  isSmallPhone
+                      ? 12
+                      : isMobile
+                      ? 16
+                      : 24,
+              vertical:
+                  isSmallPhone
+                      ? 12
+                      : isMobile
+                      ? 16
+                      : 24,
             ),
-            content: SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: isMobile ? screenWidth * 0.95 : 500,
+                maxHeight: screenHeight * 0.85,
+              ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Are you sure you want to approve this top-up request?',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: isMobile ? 13 : 14,
+                  // Title
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      isSmallPhone
+                          ? 16
+                          : isMobile
+                          ? 20
+                          : 24,
+                      isSmallPhone
+                          ? 16
+                          : isMobile
+                          ? 20
+                          : 24,
+                      isSmallPhone
+                          ? 16
+                          : isMobile
+                          ? 20
+                          : 24,
+                      isSmallPhone
+                          ? 12
+                          : isMobile
+                          ? 16
+                          : 20,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.check_circle,
+                          color: Colors.green,
+                          size:
+                              isSmallPhone
+                                  ? 22
+                                  : isMobile
+                                  ? 24
+                                  : 28,
+                        ),
+                        SizedBox(
+                          width:
+                              isSmallPhone
+                                  ? 6
+                                  : isMobile
+                                  ? 8
+                                  : 10,
+                        ),
+                        Expanded(
+                          child: Text(
+                            'Approve Top-Up Request',
+                            style: TextStyle(
+                              fontSize:
+                                  isSmallPhone
+                                      ? 14
+                                      : isMobile
+                                      ? 16
+                                      : 20,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  SizedBox(height: isMobile ? 12 : 16),
-                  Text(
-                    'Student: ${request['student_name']}',
-                    style: TextStyle(fontSize: isMobile ? 12 : 14),
-                  ),
-                  SizedBox(height: isMobile ? 4 : 8),
-                  Text(
-                    'Student ID: ${request['user_id']}',
-                    style: TextStyle(fontSize: isMobile ? 12 : 14),
-                  ),
-                  SizedBox(height: isMobile ? 4 : 8),
-                  Text(
-                    'Amount: ₱${request['amount']}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: isMobile ? 14 : 16,
-                      color: Colors.green,
+                  // Content
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.symmetric(
+                        horizontal:
+                            isSmallPhone
+                                ? 16
+                                : isMobile
+                                ? 20
+                                : 24,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Are you sure you want to approve this top-up request?',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize:
+                                  isSmallPhone
+                                      ? 12
+                                      : isMobile
+                                      ? 13
+                                      : 14,
+                            ),
+                          ),
+                          SizedBox(
+                            height:
+                                isSmallPhone
+                                    ? 12
+                                    : isMobile
+                                    ? 14
+                                    : 16,
+                          ),
+                          _buildInfoRow(
+                            'Student:',
+                            request['student_name']?.toString() ?? 'N/A',
+                            isSmallPhone,
+                            isMobile,
+                          ),
+                          SizedBox(
+                            height:
+                                isSmallPhone
+                                    ? 6
+                                    : isMobile
+                                    ? 8
+                                    : 10,
+                          ),
+                          _buildInfoRow(
+                            'Student ID:',
+                            request['user_id']?.toString() ?? 'N/A',
+                            isSmallPhone,
+                            isMobile,
+                          ),
+                          SizedBox(
+                            height:
+                                isSmallPhone
+                                    ? 6
+                                    : isMobile
+                                    ? 8
+                                    : 10,
+                          ),
+                          Text(
+                            'Amount: ₱${request['amount']?.toString() ?? '0.00'}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize:
+                                  isSmallPhone
+                                      ? 13
+                                      : isMobile
+                                      ? 14
+                                      : 16,
+                              color: Colors.green,
+                            ),
+                          ),
+                          SizedBox(
+                            height:
+                                isSmallPhone
+                                    ? 12
+                                    : isMobile
+                                    ? 14
+                                    : 16,
+                          ),
+                          Container(
+                            width: double.infinity,
+                            padding: EdgeInsets.all(
+                              isSmallPhone
+                                  ? 10
+                                  : isMobile
+                                  ? 12
+                                  : 14,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.green.shade200),
+                            ),
+                            child: Text(
+                              'This will add ₱${request['amount']?.toString() ?? '0.00'} to the student\'s balance and record the transaction.',
+                              style: TextStyle(
+                                fontSize:
+                                    isSmallPhone
+                                        ? 10
+                                        : isMobile
+                                        ? 11
+                                        : 12,
+                              ),
+                              textAlign: TextAlign.left,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  SizedBox(height: isMobile ? 12 : 16),
-                  Container(
-                    padding: EdgeInsets.all(isMobile ? 10 : 12),
-                    decoration: BoxDecoration(
-                      color: Colors.green.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.green.shade200),
+                  // Actions
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      isSmallPhone
+                          ? 12
+                          : isMobile
+                          ? 16
+                          : 20,
+                      isSmallPhone
+                          ? 12
+                          : isMobile
+                          ? 16
+                          : 20,
+                      isSmallPhone
+                          ? 12
+                          : isMobile
+                          ? 16
+                          : 20,
+                      isSmallPhone
+                          ? 12
+                          : isMobile
+                          ? 16
+                          : 20,
                     ),
-                    child: Text(
-                      'This will add ₱${request['amount']} to the student\'s balance and record the transaction.',
-                      style: TextStyle(fontSize: isMobile ? 11 : 12),
-                    ),
+                    child:
+                        isSmallPhone
+                            ? Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton(
+                                    onPressed: () {
+                                      Navigator.pop(context);
+                                      _approveRequest(request);
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.green,
+                                      padding: EdgeInsets.symmetric(
+                                        vertical: isSmallPhone ? 12 : 14,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      'Approve',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: isSmallPhone ? 13 : 14,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(height: 8),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: Text(
+                                      'Cancel',
+                                      style: TextStyle(
+                                        fontSize: isSmallPhone ? 13 : 14,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            )
+                            : Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: Text(
+                                    'Cancel',
+                                    style: TextStyle(
+                                      fontSize: isMobile ? 12 : 14,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(width: isMobile ? 8 : 12),
+                                ElevatedButton(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _approveRequest(request);
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: isMobile ? 16 : 20,
+                                      vertical: isMobile ? 10 : 12,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'Approve',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: isMobile ? 12 : 14,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                   ),
                 ],
               ),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(
-                  'Cancel',
-                  style: TextStyle(fontSize: isMobile ? 12 : 14),
-                ),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _approveRequest(request);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isMobile ? 12 : 16,
-                    vertical: isMobile ? 8 : 12,
-                  ),
-                ),
-                child: Text(
-                  'Approve',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: isMobile ? 12 : 14,
-                  ),
-                ),
-              ),
-            ],
-            actionsPadding: EdgeInsets.all(isMobile ? 8 : 16),
           ),
+    );
+  }
+
+  /// Helper widget for info rows
+  Widget _buildInfoRow(
+    String label,
+    String value,
+    bool isSmallPhone,
+    bool isMobile,
+  ) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.w500,
+            fontSize:
+                isSmallPhone
+                    ? 11
+                    : isMobile
+                    ? 12
+                    : 14,
+          ),
+        ),
+        SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize:
+                  isSmallPhone
+                      ? 11
+                      : isMobile
+                      ? 12
+                      : 14,
+            ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+          ),
+        ),
+      ],
     );
   }
 
@@ -2256,14 +2506,16 @@ class _TopUpTabState extends State<TopUpTab>
           .eq('student_id', request['user_id']);
 
       // Insert into top_up_transactions
+      // NOTE: DB check constraint likely allows only specific values for transaction_type (e.g., 'top_up', 'loan_disbursement').
+      // To avoid violating the constraint, we use 'top_up' here and encode GCASH source in metadata fields.
       await SupabaseService.adminClient.from('top_up_transactions').insert({
         'student_id': request['user_id'],
         'amount': topUpAmount,
         'previous_balance': currentBalance,
         'new_balance': newBalance,
-        'transaction_type': 'top_up',
-        'processed_by': 'admin', // You can customize this
-        'notes': 'GCash payment verification - Request ID: ${request['id']}',
+        'transaction_type': 'top_up_gcash',
+        'processed_by': 'Admin (GCash Verification)',
+        'notes': 'GCash payment verification • Request ID: ${request['id']}',
         'created_at': DateTime.now().toIso8601String(),
       });
 
@@ -2280,50 +2532,150 @@ class _TopUpTabState extends State<TopUpTab>
       _loadPendingRequests();
       _loadRecentTopUps();
 
-      // Show success dialog
+      // Show success dialog (responsive, scrollable to avoid overflow)
       showDialog(
         context: context,
-        builder:
-            (context) => AlertDialog(
-              title: const Row(
-                children: [
-                  Icon(Icons.check_circle, color: Colors.green, size: 28),
-                  SizedBox(width: 8),
-                  Text('Request Approved'),
-                ],
+        builder: (context) {
+          final screenWidth = MediaQuery.of(context).size.width;
+          final screenHeight = MediaQuery.of(context).size.height;
+          final isMobile = screenWidth < 600;
+          final isSmallPhone = screenWidth < 360;
+
+          return Dialog(
+            insetPadding: EdgeInsets.symmetric(
+              horizontal:
+                  isSmallPhone
+                      ? 12
+                      : isMobile
+                      ? 16
+                      : 24,
+              vertical:
+                  isSmallPhone
+                      ? 12
+                      : isMobile
+                      ? 16
+                      : 24,
+            ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: isMobile ? screenWidth * 0.95 : 500,
+                maxHeight: screenHeight * 0.85,
               ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Student: ${request['student_name']}'),
-                  Text('Student ID: ${request['user_id']}'),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Previous Balance: ₱${currentBalance.toStringAsFixed(2)}',
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: EdgeInsets.all(
+                    isSmallPhone ? 16 : (isMobile ? 20 : 24),
                   ),
-                  Text('Top-Up Amount: ₱${topUpAmount.toStringAsFixed(2)}'),
-                  Text(
-                    'New Balance: ₱${newBalance.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.green,
-                      fontSize: 16,
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(backgroundColor: evsuRed),
-                  child: const Text(
-                    'OK',
-                    style: TextStyle(color: Colors.white),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.check_circle,
+                            color: Colors.green,
+                            size: isSmallPhone ? 22 : (isMobile ? 24 : 28),
+                          ),
+                          SizedBox(
+                            width: isSmallPhone ? 6 : (isMobile ? 8 : 10),
+                          ),
+                          Expanded(
+                            child: Text(
+                              'Request Approved',
+                              style: TextStyle(
+                                fontSize:
+                                    isSmallPhone ? 14 : (isMobile ? 16 : 18),
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(
+                        height: isSmallPhone ? 12 : (isMobile ? 14 : 16),
+                      ),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(isSmallPhone ? 12 : 14),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.green.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Student: ${request['student_name']}',
+                              style: TextStyle(
+                                fontSize: isSmallPhone ? 12 : 13,
+                              ),
+                              softWrap: true,
+                            ),
+                            SizedBox(height: isSmallPhone ? 4 : 6),
+                            Text(
+                              'Student ID: ${request['user_id']}',
+                              style: TextStyle(
+                                fontSize: isSmallPhone ? 12 : 13,
+                              ),
+                              softWrap: true,
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        height: isSmallPhone ? 12 : (isMobile ? 14 : 16),
+                      ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildSummaryTile(
+                              label: 'Previous Balance',
+                              value: '₱${currentBalance.toStringAsFixed(2)}',
+                            ),
+                          ),
+                          SizedBox(width: isSmallPhone ? 8 : 12),
+                          Expanded(
+                            child: _buildSummaryTile(
+                              label: 'Top-Up Amount',
+                              value: '₱${topUpAmount.toStringAsFixed(2)}',
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: isSmallPhone ? 8 : 12),
+                      _buildSummaryTile(
+                        label: 'New Balance',
+                        value: '₱${newBalance.toStringAsFixed(2)}',
+                        highlight: true,
+                      ),
+                      SizedBox(height: isSmallPhone ? 14 : 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(context),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: evsuRed,
+                            padding: EdgeInsets.symmetric(
+                              vertical: isSmallPhone ? 12 : 14,
+                            ),
+                          ),
+                          child: const Text(
+                            'OK',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
+          );
+        },
       );
     } catch (e) {
       // Close loading dialog
@@ -2351,6 +2703,46 @@ class _TopUpTabState extends State<TopUpTab>
             ),
       );
     }
+  }
+
+  // Small helper to render a labeled value in the success dialog
+  Widget _buildSummaryTile({
+    required String label,
+    required String value,
+    bool highlight = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: highlight ? Colors.green.shade50 : Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: highlight ? Colors.green.shade200 : Colors.grey.shade200,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: highlight ? Colors.green.shade800 : Colors.black87,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Reject a top-up request

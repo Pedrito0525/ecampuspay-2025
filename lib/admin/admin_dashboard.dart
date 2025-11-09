@@ -8,6 +8,7 @@ import 'vendors_tab.dart';
 import 'settings_tab.dart';
 import 'loaning_tab.dart';
 import 'feedback_tab.dart';
+import 'withdrawal_requests_tab.dart';
 import '../login_page.dart';
 import '../services/session_service.dart';
 import '../user/user_dashboard.dart';
@@ -64,6 +65,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
       id: 'topup',
     ),
     NavigationItem(
+      icon: Icons.account_balance_wallet_outlined,
+      activeIcon: Icons.account_balance_wallet,
+      label: 'Withdrawal Requests',
+      id: 'withdrawal_requests',
+    ),
+    NavigationItem(
       icon: Icons.settings_outlined,
       activeIcon: Icons.settings,
       label: 'Settings',
@@ -112,15 +119,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
       const ReportsTab(), // 1 - Reports (Main)
       const TransactionsTab(), // 2 - Transactions (Main)
       const TopUpTab(), // 3 - Top-Up (Main)
+      const WithdrawalRequestsTab(), // 4 - Withdrawal Requests (Main)
       SettingsTab(
         initialFunction: _settingsInitialFunction,
-      ), // 4 - Settings (Bottom nav profile replacement)
-      const UserManagementTab(), // 5 - User Management (Management)
+      ), // 5 - Settings (Bottom nav profile replacement)
+      const UserManagementTab(), // 6 - User Management (Management)
       VendorsTab(
         navigateToServiceRegistration: widget.navigateToServiceRegistration,
-      ), // 6 - Service Ports (Management)
-      const LoaningTab(), // 7 - Loaning (Management)
-      const FeedbackTab(), // 8 - Feedback (Management)
+      ), // 7 - Service Ports (Management)
+      const LoaningTab(), // 8 - Loaning (Management)
+      const FeedbackTab(), // 9 - Feedback (Management)
     ];
   }
 
@@ -181,10 +189,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
   void navigateToSettingsWithFunction(int functionIndex) {
     setState(() {
       _settingsInitialFunction = functionIndex;
-      _currentIndex = 4; // Settings tab index
+      _currentIndex = 5; // Settings tab index
     });
     // Rebuild the tabs with the new initial function
-    _tabs[4] = SettingsTab(initialFunction: _settingsInitialFunction);
+    _tabs[5] = SettingsTab(initialFunction: _settingsInitialFunction);
   }
 
   @override
@@ -332,7 +340,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     ),
                   ),
                 ..._navigationItems
-                    .take(5)
+                    .take(6)
                     .map((item) => _buildNavItem(item, isCollapsed)),
                 if (!isCollapsed) ...[
                   const SizedBox(height: 20),
@@ -350,7 +358,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                 ],
                 ..._navigationItems
-                    .skip(5)
+                    .skip(6)
                     .map((item) => _buildNavItem(item, isCollapsed)),
               ],
             ),
@@ -559,8 +567,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
         onTap: (index) {
           // Map bottom navigation index to actual tab index
           int actualIndex = index;
-          if (index == 3) {
-            actualIndex = 4; // Settings tab is at index 4
+          if (index == 4) {
+            actualIndex = 5; // Settings tab is at index 5
           }
           setState(() => _currentIndex = actualIndex);
         },
@@ -621,7 +629,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
           BottomNavigationBarItem(
             icon: Icon(
-              _currentIndex == 4 ? Icons.settings : Icons.settings_outlined,
+              _currentIndex == 5 ? Icons.settings : Icons.settings_outlined,
             ),
             label: 'Settings',
           ),
@@ -684,7 +692,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                               title: 'Settings',
                               onTap: () {
                                 Navigator.pop(context);
-                                changeTabIndex(4); // Navigate to Settings tab
+                                changeTabIndex(5); // Navigate to Settings tab
                               },
                             ),
                             _buildActionButton(
@@ -760,7 +768,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     title: const Text('Settings'),
                     onTap: () {
                       Navigator.pop(context);
-                      changeTabIndex(4); // Navigate to Settings tab
+                      changeTabIndex(5); // Navigate to Settings tab
                     },
                   ),
                   ListTile(
